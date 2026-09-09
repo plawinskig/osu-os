@@ -1,4 +1,6 @@
-.config
-.config.old
-*.swp
-*~
+board/osukiosk/output/
+board/osukiosk/tmp/
+board/osukiosk/root/
+board/osukiosk/boot-files/
+*.img
+*.vfat

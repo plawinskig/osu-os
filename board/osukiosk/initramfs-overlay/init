@@ -28,7 +28,7 @@ sleep 1
 # across different machines - exactly the variability Approach B
 # must tolerate.
 mkdir -p /mnt/boot
-mount -L OSUKIOSK_BOOT /mnt/boot
+mount -L OSUBOOT /mnt/boot
 
 # Mount the squashfs image found on the boot partition. This mount
 # is temporary - we only read from it once, to populate tmpfs below.
