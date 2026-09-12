@@ -1,0 +1,12 @@
+#!/bin/sh
+# PLACEHOLDER for the future graphical session launcher.
+# Currently just proves that BusyBox init's respawn mechanism works
+# end-to-end: mounts are done, we reach userspace, and init keeps
+# this process alive. Sway/Gamescope + osu!lazer launch logic
+# replaces this script's body in a later stage.
+
+echo "osukiosk-session: alive, PID $$, data partition status:"
+mount | grep /data
+echo "osukiosk-session: sleeping 10s before intentional exit (respawn test)"
+sleep 10
+exit 0

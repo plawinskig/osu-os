@@ -1,0 +1,24 @@
+#!/bin/sh
+# Mounts the persistent F2FS data partition (beatmaps, settings,
+# scores) into the running-from-tmpfs main system. Runs once during
+# sysinit, before the session launcher's first respawn cycle.
+
+MOUNT_POINT=/data
+
+mkdir -p "$MOUNT_POINT"
+
+# Mount by filesystem LABEL, not by device path - the same reasoning
+# as in the initramfs /init: device enumeration order (sda vs sdb,
+# or NVMe naming) is not guaranteed to be identical across different
+# host machines, which breaks the "boot on any hardware" requirement
+# if we hardcode a path like /dev/sda2.
+mount -L OSUKIOSK_DATA "$MOUNT_POINT"
+
+if [ $? -ne 0 ]; then
+    # If the data partition fails to mount (corrupted filesystem,
+    # unexpected media), we deliberately do NOT panic or halt boot.
+    # A kiosk that refuses to start because scores can't be saved is
+    # a worse failure mode than one that starts read-only-effectively
+    # and simply can't persist this session's results.
+    echo "WARNING: failed to mount OSUKIOSK_DATA, continuing without persistence" > /dev/kmsg
+fi

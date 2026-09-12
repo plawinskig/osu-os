@@ -1,0 +1,21 @@
+# BusyBox init reads this table top-to-bottom exactly once at boot.
+# CRITICAL: at least one entry MUST be "respawn" - without it, init
+# runs through the table, finds nothing left to do, and exits.
+# PID 1 exiting is fatal to the kernel (see: our earlier panic).
+
+# Run system initialization: mounts, module loading order, etc.
+# "sysinit" actions run once, in order, before anything else.
+::sysinit:/etc/init.d/rcS
+
+# Respawn a session-launcher script forever on the main console.
+# If the game (or the graphical session around it) crashes, this
+# process exits, and init immediately restarts it - this IS our
+# "supervisor" for the kiosk, achieved with nothing more than
+# BusyBox init's respawn mechanism.
+tty1::respawn:/usr/bin/osukiosk-session
+
+# Handle Ctrl-Alt-Del gracefully instead of an immediate hard reset.
+::ctrlaltdel:/sbin/reboot
+
+# Ensure a clean unmount sequence on shutdown/reboot signals.
+::shutdown:/bin/umount -a -r
