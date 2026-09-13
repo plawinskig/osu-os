@@ -1,56 +1,33 @@
 #!/bin/sh
-# This script runs as PID 1 immediately after the kernel decompresses
-# the initramfs into memory. Its only job: get the real system running
-# in tmpfs as fast as possible, then hand off control via switch_root.
-
-# Mount the pseudo-filesystems the kernel needs to function.
-# Without /proc and /sys, even basic tools like mdev cannot query
-# hardware state or read kernel-exposed device information.
 mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev
 
-# Populate /dev with device nodes matching the ACTUAL hardware present
-# on this machine. This is the concrete mechanism behind "Approach B" -
-# mdev reads /sys, creates device nodes, and (via /etc/mdev.conf hooks)
-# can trigger modprobe for matching kernel modules.
-echo /sbin/mdev > /proc/sys/kernel/hotplug
-mdev -s
+echo "======================================"
+echo " OSU Kiosk - Oczekiwanie na dysk USB  "
+echo "======================================"
 
-# Give USB devices a moment to fully enumerate. On some controllers,
-# the block device for the USB stick is not immediately ready right
-# after mdev's initial scan.
-sleep 1
-
-# Locate the boot partition by filesystem LABEL rather than a fixed
-# device path like /dev/sda1. Device naming (sda vs sdb vs nvme0n1)
-# depends on enumeration order and controller type, which varies
-# across different machines - exactly the variability Approach B
-# must tolerate.
 mkdir -p /mnt/boot
-mount -L OSUBOOT /mnt/boot
+WAIT=0
 
-# Mount the squashfs image found on the boot partition. This mount
-# is temporary - we only read from it once, to populate tmpfs below.
-mkdir -p /mnt/squash
-mount -t squashfs -o loop /mnt/boot/rootfs.squashfs /mnt/squash
+while ! mount -L OSUBOOT /mnt/boot 2>/dev/null; do
+    sleep 1
+    WAIT=$((WAIT+1))
+    if [ $WAIT -gt 15 ]; then
+        echo "FATAL ERROR: Pendrive OSUBOOT nie zostal wykryty!"
+        echo "Wchodze w tryb ratunkowy..."
+        exec sh
+    fi
+done
 
-# THE key step for eliminating the USB throughput bottleneck:
-# copy the entire decompressed system into a tmpfs (RAM-backed
-# filesystem). After this point, nothing in normal operation reads
-# from the USB stick again except our persistent data partition.
-mkdir -p /newroot
-mount -t tmpfs -o size=100% none /newroot
-cp -a /mnt/squash/. /newroot/
+echo "USB znalezione. Kopiowanie systemu do RAM..."
+cp /mnt/boot/rootfs.squashfs /tmp/ || { echo "FATAL ERROR: Brak pliku rootfs.squashfs!"; exec sh; }
 
-# Clean up the intermediate mounts - they are no longer needed and
-# holding them open would keep a reference to the slow USB device.
-umount /mnt/squash
+echo "Montowanie SquashFS..."
+mkdir -p /mnt/root
+mount -t squashfs -o loop /tmp/rootfs.squashfs /mnt/root || { echo "FATAL ERROR: Blad SquashFS!"; exec sh; }
+
 umount /mnt/boot
 
-# Hand off control: switch_root replaces the current root filesystem
-# with /newroot and execs the target init (BusyBox init in the main
-# system), becoming the new PID 1. The initramfs environment ceases
-# to exist at this point - fully "spent", memory reclaimed.
-exec switch_root /newroot /sbin/init
-
+echo "Przelaczanie na glowny system (switch_root)..."
+exec switch_root /mnt/root /sbin/init || { echo "FATAL ERROR: switch_root zawiodl!"; exec sh; }
