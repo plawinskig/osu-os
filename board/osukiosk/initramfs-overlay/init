@@ -3,31 +3,34 @@ mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev
 
-echo "======================================"
-echo " OSU Kiosk - Oczekiwanie na dysk USB  "
-echo "======================================"
-
+echo "Szukanie pendrive'a z systemem (max 10s)..."
 mkdir -p /mnt/boot
-WAIT=0
+FOUND=0
 
-while ! mount -L OSUBOOT /mnt/boot 2>/dev/null; do
-    sleep 1
-    WAIT=$((WAIT+1))
-    if [ $WAIT -gt 15 ]; then
-        echo "FATAL ERROR: Pendrive OSUBOOT nie zostal wykryty!"
-        echo "Wchodze w tryb ratunkowy..."
-        exec sh
-    fi
+for i in 1 2 3 4 5; do
+    for dev in /dev/sd* /dev/nvme*n1p*; do
+        if [ -b "$dev" ]; then
+            mount "$dev" /mnt/boot 2>/dev/null
+            if [ -f /mnt/boot/rootfs.squashfs ]; then
+                FOUND=1
+                break 2
+            fi
+            umount /mnt/boot 2>/dev/null
+        fi
+    done
+    sleep 2
 done
 
-echo "USB znalezione. Kopiowanie systemu do RAM..."
-cp /mnt/boot/rootfs.squashfs /tmp/ || { echo "FATAL ERROR: Brak pliku rootfs.squashfs!"; exec sh; }
+if [ $FOUND -eq 0 ]; then
+    echo "FATAL ERROR: Nie znaleziono rootfs.squashfs!"
+    exec sh
+fi
 
-echo "Montowanie SquashFS..."
+echo "Kopiowanie systemu do RAM..."
+cp /mnt/boot/rootfs.squashfs /tmp/ || exec sh
+
 mkdir -p /mnt/root
-mount -t squashfs -o loop /tmp/rootfs.squashfs /mnt/root || { echo "FATAL ERROR: Blad SquashFS!"; exec sh; }
-
+mount -t squashfs -o loop /tmp/rootfs.squashfs /mnt/root || exec sh
 umount /mnt/boot
 
-echo "Przelaczanie na glowny system (switch_root)..."
-exec switch_root /mnt/root /sbin/init || { echo "FATAL ERROR: switch_root zawiodl!"; exec sh; }
+exec switch_root /mnt/root /sbin/init || exec sh
