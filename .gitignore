@@ -4,4 +4,5 @@ board/osukiosk/root/
 board/osukiosk/boot-files/
 *.img
 *.vfat
-osuos-handover.md
+CLAUDE.md
+.claude
