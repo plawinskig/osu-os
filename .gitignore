@@ -5,6 +5,5 @@ board/osukiosk/bzImage
 board/osukiosk/rootfs.squashfs
 *.img
 *.vfat
-CLAUDE.md
 .claude/*
 !.claude/skills/
