@@ -1,5 +1,5 @@
 BR2_x86_64=y
-BR2_ROOTFS_OVERLAY="board/osukiosk/initramfs-overlay"
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_OSUKIOSK_PATH)/board/osukiosk/initramfs-overlay"
 BR2_TARGET_ROOTFS_CPIO=y
 BR2_TARGET_ROOTFS_CPIO_GZIP=y
 # BR2_TARGET_ROOTFS_TAR is not set
