@@ -1,0 +1,42 @@
+# /etc/inittab for the osu!kiosk main system (BusyBox init).
+#
+# Based on the default Buildroot inittab, with the changes explained
+# below. Format: <id>:<runlevels>:<action>:<process>; BusyBox init
+# ignores runlevels. An empty id means "use init's own console".
+
+# Startup the system.
+#
+# /init (initramfs) does not carry its devtmpfs mount over to the new
+# root, and the kernel only auto-mounts devtmpfs when it mounts a real
+# root itself. The squashfs /dev is an empty directory on a read-only
+# filesystem, so mount devtmpfs first: everything below needs
+# /dev/null, and the session launcher needs /dev/tty1.
+::sysinit:/bin/mount -t devtmpfs devtmpfs /dev
+::sysinit:/bin/mount -t proc proc /proc
+# No "mount -o remount,rw /" here: the root is a read-only squashfs by
+# design, so the remount could only fail.
+::sysinit:/bin/mkdir -p /dev/pts /dev/shm
+::sysinit:/bin/mount -a
+::sysinit:/bin/mkdir -p /run/lock/subsys
+::sysinit:/sbin/swapon -a
+null::sysinit:/bin/ln -sf /proc/self/fd /dev/fd
+null::sysinit:/bin/ln -sf /proc/self/fd/0 /dev/stdin
+null::sysinit:/bin/ln -sf /proc/self/fd/1 /dev/stdout
+null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
+::sysinit:/bin/hostname -F /etc/hostname
+# now run any rc scripts
+::sysinit:/etc/init.d/rcS
+
+# Session launcher, supervised by init: "respawn" makes BusyBox init
+# start the launcher again whenever it exits. That is how a crash of
+# the game (or of the graphical session around it) is recovered from,
+# with nothing more than init itself acting as the supervisor.
+tty1::respawn:/usr/bin/osukiosk-session
+
+# Stuff to do for the 3-finger salute
+::ctrlaltdel:/sbin/reboot
+
+# Stuff to do before rebooting
+::shutdown:/etc/init.d/rcK
+::shutdown:/sbin/swapoff -a
+::shutdown:/bin/umount -a -r
