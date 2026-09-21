@@ -1,24 +1,58 @@
 #!/bin/sh
 # Mounts the persistent F2FS data partition (beatmaps, settings,
 # scores) into the running-from-tmpfs main system. Runs once during
-# sysinit, before the session launcher's first respawn cycle.
+# sysinit, before the session launcher's first respawn cycle, and
+# unmounts the partition again on shutdown (rcK calls "stop").
 
+DATA_LABEL=OSUKIOSK_DATA
+
+# The mount point exists in the rootfs overlay (data/.empty): the root
+# is a read-only squashfs, so it cannot be created at runtime.
 MOUNT_POINT=/data
 
-mkdir -p "$MOUNT_POINT"
+# Find the partition by filesystem LABEL, not by device path - the same
+# reasoning as in the initramfs /init: device enumeration order (sda vs
+# sdb, or NVMe naming) is not guaranteed to be identical across host
+# machines, which breaks the "boot on any hardware" requirement if we
+# hardcode a path like /dev/sda2. BusyBox mount is built without label
+# support (no "mount -L"), so ask blkid instead; it prints lines like
+#   /dev/sda2: LABEL="OSUKIOSK_DATA" UUID="..." TYPE="f2fs"
+find_data_device() {
+    blkid | sed -n "s|^\([^:]*\):.*LABEL=\"$DATA_LABEL\".*|\1|p" | head -n 1
+}
 
-# Mount by filesystem LABEL, not by device path - the same reasoning
-# as in the initramfs /init: device enumeration order (sda vs sdb,
-# or NVMe naming) is not guaranteed to be identical across different
-# host machines, which breaks the "boot on any hardware" requirement
-# if we hardcode a path like /dev/sda2.
-mount -L OSUKIOSK_DATA "$MOUNT_POINT"
+warn() {
+    echo "WARNING: $*, continuing without persistence" > /dev/kmsg
+}
 
-if [ $? -ne 0 ]; then
-    # If the data partition fails to mount (corrupted filesystem,
-    # unexpected media), we deliberately do NOT panic or halt boot.
-    # A kiosk that refuses to start because scores can't be saved is
-    # a worse failure mode than one that starts read-only-effectively
-    # and simply can't persist this session's results.
-    echo "WARNING: failed to mount OSUKIOSK_DATA, continuing without persistence" > /dev/kmsg
-fi
+# A missing or unmountable data partition (corrupted filesystem,
+# unexpected media) deliberately does NOT panic or halt boot. A kiosk
+# that refuses to start because scores can't be saved is a worse
+# failure mode than one that starts read-only-effectively and simply
+# can't persist this session's results.
+start() {
+    device=$(find_data_device)
+    if [ -z "$device" ]; then
+        warn "no partition labelled $DATA_LABEL found"
+        return 1
+    fi
+
+    if ! mount -t f2fs "$device" "$MOUNT_POINT"; then
+        warn "failed to mount $device on $MOUNT_POINT"
+        return 1
+    fi
+}
+
+stop() {
+    umount "$MOUNT_POINT"
+}
+
+case "$1" in
+    start|stop)
+        "$1"
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+        ;;
+esac
