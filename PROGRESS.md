@@ -8,39 +8,49 @@ Stałą architekturę i konwencje trzymamy w `CLAUDE.md`, nie tutaj.
 
 ## Status etapów
 
-- ✅ Etap 1 — kernel main systemu (odchudzony od `x86_64_defconfig`, dwie rundy
-  code-review), toolchain (glibc, generic x86-64).
+- ✅ Etap 1 — kernel main systemu (odchudzony), toolchain (glibc, generic
+  x86-64). Config kernela to `board/osukiosk/linux.config`, podłączony do
+  Buildroota przez `BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG`.
 - ✅ Etap 2 — dwuetapowa architektura rootfs (initramfs jako osobny build
   Buildroota, `rootfs.cpio` wchłonięty przez główny kernel).
-- ✅ Etap 3 — fizyczny layout pendrive'a (`genimage`, MBR, syslinux). Obraz
-  bootuje się poprawnie na fizycznym sprzęcie (zweryfikowane na ASUS FX503VM).
-- 🔧 Etap 4 — init głównego systemu (`inittab` z `respawn`, montowanie
-  partycji DATA, placeholder `osukiosk-session`) — przygotowane, ale
-  **zablokowane bugiem opisanym niżej**, nie potwierdzone end-to-end na
-  fizycznym sprzęcie.
+- ✅ Etap 3 — fizyczny layout pendrive'a (`genimage`, MBR, syslinux). Uwaga:
+  wcześniejsze „zweryfikowane do `switch_root` na sprzęcie" nie miało pokrycia
+  w ówczesnym kernelu; pełny łańcuch potwierdzono dopiero w Etapie 4.
+- ✅ Etap 4 — boot end-to-end. Zweryfikowane na ASUS FX503VM (21.09.2026):
+  bootloader → initramfs → `switch_root` → BusyBox init → pętla `respawn`
+  `osukiosk-session` (PID rośnie) z `/data` zamontowanym jako F2FS `rw`.
+  Zakres: baseline + 4 poprawki:
+  - **Baseline:** `linux.config` podłączony do buildu, defconfigi
+    zsynchronizowane z realnym configiem, binaria buildu wyjęte z gita.
+  - **A — USB wbudowane w kernel:** `USB`, xHCI/EHCI (+ `*_PCI`),
+    `USB_STORAGE`, `USB_HID`, `HID_GENERIC`, `I2C_HID_ACPI` (initramfs nie ładuje modułów).
+  - **B — `SQUASHFS_XZ`:** rootfs jest kompresowany XZ, kernel miał tylko zlib.
+  - **C — inittab main systemu:** przeniesiony do `rootfs-overlay/`, z
+    `devtmpfs` na `/dev` i `respawn` sesji; usunięty martwy z initramfs.
+  - **D — dane:** `F2FS_FS=y`, punkt montowania `/data` w overlayu,
+    `S41mountdata` szuka partycji przez `blkid` (BusyBox `mount` nie ma `-L`)
+    i odmontowuje ją na `stop`.
 - ⏳ Etap 5 — stack graficzny (`seatd`, Sway/Gamescope, ALSA) — nierozpoczęty.
 
-## Aktualny blocker
+## Otwarte sprawy (na start Etapu 5)
 
-**Symptom:** na fizycznym sprzęcie (ASUS FX503VM) initramfs nie znajduje
-pendrive'a i system spada do awaryjnego shella BusyBoksa; klawiatura tam nie
-działa, więc nie da się nawet zdiagnozować sytuacji interaktywnie.
-
-**Przyczyna:** GŁÓWNY kernel (`board/osukiosk/linux.config` — to ten, który
-faktycznie się bootuje i wykonuje `/init`) ma sterowniki USB storage, FAT32 i
-HID/klawiatury skompilowane jako moduły (`=m`) zamiast wbudowane (`=y`).
-Initramfs nie ma mechanizmu ładowania modułów z zewnątrz siebie, więc jest
-"ślepy i głuchy" na te podsystemy.
-
-**Rozwiązanie (uzgodnione, do wykonania):** w `board/osukiosk/linux.config`
-ustawić na `y`: `CONFIG_USB_HID`, `CONFIG_HID_GENERIC`, `CONFIG_I2C_HID_ACPI`,
-`CONFIG_USB_XHCI_HCD`, `CONFIG_USB_EHCI_HCD`, `CONFIG_USB_STORAGE`,
-`CONFIG_FAT_FS`, `CONFIG_VFAT_FS`, `CONFIG_NLS_CODEPAGE_437`,
-`CONFIG_NLS_ISO8859_1`, `CONFIG_INPUT_KEYBOARD`, `CONFIG_KEYBOARD_ATKBD`.
-Po zmianie: `olddefconfig` → `make` (pełny build main systemu, bez `O=`) →
-skorzystać ze skilla `build-osukiosk-image` do złożenia i przekazania obrazu.
-
-**Kryterium zamknięcia:** po wgraniu na pendrive i boot na ASUS FX503VM,
-konsola pokazuje w pętli komunikaty `osukiosk-session: alive, PID ...`
-(rosnący PID = dowód działania `respawn`) zamiast panica/awaryjnego shella.
-Po potwierdzeniu — nadpisz tę sekcję statusem Etapu 5.
+- **RO rootfs:** `/var/lib` jest niezapisywalny (`seedrng: can't create
+  directory '/var/lib/seedrng'`). Ścieżki zapisu (`/var/lib`, `/var/log` itd.)
+  wymagają tmpfs lub symlinków, zanim dojdzie zapisujący się runtime (.NET, Sway).
+- **`quiet` zdjęte z `extlinux.conf`** na czas testów Etapu 4 — do decyzji,
+  czy przywrócić.
+- **Szum w logu:** `F2FS-fs (sda): Magic Mismatch` z autodetekcji `mount` w
+  `/init` (mount bez `-t` próbuje F2FS na całym dysku). Nieszkodliwe; da się
+  wyciszyć przez `mount -t vfat` w `/init`.
+- **`/init`:** pętla szukania pendrive'a trwa 10 s (wolniejszy sprzęt może
+  potrzebować więcej), przy porażce brak diagnostyki (`/proc/partitions`,
+  `dmesg`), komunikaty po polsku (konwencja: kod po angielsku).
+- **Nagłówki toolchaina** (`BR2_KERNEL_HEADERS_7_0`, glibc `--enable-kernel=7.0`)
+  są nowsze niż kernel 6.18.48. Nie blokuje bootu, ale glibc może zakładać
+  syscalle nowsze niż 6.18 — rozważyć wyrównanie przed dociąganiem runtime .NET.
+- **Skill `build-osukiosk-image`:** krok 1 każe kopiować pliki do `boot-files/`,
+  a `genimage` czyta z `board/osukiosk/` — do poprawienia w `SKILL.md`.
+- **Klawiatura w awaryjnym shellu** (objaw z ASUS-a przed poprawkami) nie była
+  ponownie testowana po Etapie 4. Wewnętrzna klawiatura PS/2 miała sterowniki
+  wbudowane od początku; jeśli nadal zawodzi, następny trop to `i8042.*`
+  w `extlinux.conf`.
