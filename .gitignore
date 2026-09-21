@@ -1,10 +1,10 @@
 board/osukiosk/output/
 board/osukiosk/tmp/
 board/osukiosk/root/
-board/osukiosk/boot-files/
 board/osukiosk/bzImage
 board/osukiosk/rootfs.squashfs
 *.img
 *.vfat
 CLAUDE.md
-.claude
+.claude/*
+!.claude/skills/
