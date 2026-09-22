@@ -84,7 +84,16 @@ lag i audio latency. Audio na start: sam ALSA + `snd-usb-audio`, bez PipeWire
   kernela, który faktycznie się bootuje (main system, `board/osukiosk/linux.config`),
   czy config initramfsu (który generuje tylko `rootfs.cpio`, wchłaniany przez
   ten pierwszy — initramfs sam w sobie nigdy nie produkuje bootowalnego
-  `bzImage`; w ogóle nie zawiera kernela).
+  `bzImage`; w ogóle nie zawiera kernela). `CONFIG_INITRAMFS_SOURCE` w
+  `linux.config` jest celowo ścieżką **względną**
+  (`../../../../output-initramfs/images/rootfs.cpio`), nie bezwzględną —
+  kbuild rozwiązuje tę ścieżkę względem katalogu budowy kernela
+  (`buildroot/output/build/linux-<wersja>/`), a Buildrootowe `$(VAR)` (jak w
+  `BR2_ROOTFS_OVERLAY` niżej) nie działa wewnątrz `linux.config`, bo to plik
+  konsumowany przez odrębne, własne drzewo Kconfig kernela, nieznające
+  symboli Buildroota. Ta ścieżka zakłada domyślne położenie katalogu
+  wyjściowego Buildroota (bez własnego `O=`) i niezmienność powyższego
+  sąsiedztwa katalogów.
 - **Config kernela main systemu:** źródłem prawdy jest `board/osukiosk/linux.config`
   (savedefconfig), podłączony w `configs/osukiosk_main_defconfig` przez
   `BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG`. Edytujesz ten plik, `make -C ../buildroot`
