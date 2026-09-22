@@ -1,12 +1,40 @@
 #!/bin/sh
-# PLACEHOLDER for the future graphical session launcher.
-# Currently just proves that BusyBox init's respawn mechanism works
-# end-to-end: mounts are done, we reach userspace, and init keeps
-# this process alive. Sway/Gamescope + osu!lazer launch logic
-# replaces this script's body in a later stage.
+# Graphical session launcher, Stage 5 Step B: minimal cage + swaybg
+# smoke test. Still a throwaway test step, not the final session
+# (that lands in Step E) - just enough to prove the compositor
+# actually renders pixels on the real screen.
+#
+# BusyBox init spawns tty1::respawn processes as root (inittab has
+# no per-line user field), so this script's own job is: prepare the
+# one piece of root-only state a Wayland session needs
+# (XDG_RUNTIME_DIR), then drop to the unprivileged "kiosk" account
+# before touching any GPU/input device. seatd (S70seatd, already
+# running as root) is the actual hardware-access mediator for the
+# unprivileged process from here on - this script never opens a
+# DRM/input device itself.
 
-echo "osukiosk-session: alive, PID $$, data partition status:"
-mount | grep /data
-echo "osukiosk-session: sleeping 10s before intentional exit (respawn test)"
-sleep 10
-exit 0
+RUNTIME_DIR=/run/user/900
+
+# /run is tmpfs (see /etc/fstab, inherited from Buildroot's sysv
+# skeleton) and is already mounted by the time this line runs:
+# inittab's sysinit "mount -a" happens before /etc/init.d/rcS, which
+# itself happens before this tty1::respawn line. No rootfs-overlay
+# ".empty" marker is needed for a path that only ever exists on
+# tmpfs, never on the read-only squashfs.
+if ! mkdir -p "$RUNTIME_DIR"; then
+	echo "osukiosk-session: cannot create $RUNTIME_DIR" > /dev/kmsg
+	exit 1
+fi
+chown kiosk:kiosk "$RUNTIME_DIR"
+chmod 0700 "$RUNTIME_DIR"
+
+export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+
+# cage is a single-client kiosk compositor: it exits as soon as its
+# one client exits (crash or otherwise). swaybg just paints a solid
+# color, so the screen visibly lighting up red is this step's
+# pass/fail signal. The nested "exec" keeps the whole chain to one
+# process image (osukiosk-session -> su -> sh -> cage), so init's
+# respawn PID tracking follows cage directly: cage exiting is what
+# triggers init to restart this whole script.
+exec su -s /bin/sh kiosk -c "exec cage -- swaybg -c '#ff0000'"

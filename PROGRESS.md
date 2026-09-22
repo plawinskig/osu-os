@@ -30,8 +30,9 @@ Stałą architekturę i konwencje trzymamy w `CLAUDE.md`, nie tutaj.
   - **D — dane:** `F2FS_FS=y`, punkt montowania `/data` w overlayu,
     `S41mountdata` szuka partycji przez `blkid` (BusyBox `mount` nie ma `-L`)
     i odmontowuje ją na `stop`.
-- ⏳ Etap 5 — stack graficzny (`seatd`, Sway, ALSA) — **w toku, Krok A
-  zamknięty** (patrz sekcja "Plan Etapu 5" niżej, Krok B następny).
+- ⏳ Etap 5 — stack graficzny (`seatd`, `cage`, ALSA) — **w toku, Krok A
+  zamknięty, Krok B zaimplementowany i zweryfikowany w QEMU, ale bramka
+  fizyczna zablokowana na sprzęcie** (patrz sekcja "Plan Etapu 5" niżej).
 
 ## Plan Etapu 5 — Kroki A-E
 
@@ -41,12 +42,36 @@ turze (zasady z `CLAUDE.md`).
 
 ### Decyzje wiążące dla całego etapu (nie do ponownego roztrząsania bez nowego argumentu)
 
-- **Kompozytor: Sway jako baseline, Gamescope jako warunkowa furtka.**
-  Buildroot ma gotowy pakiet `sway` (+ `seatd`, `mesa3d`, `wayland`,
-  `libdrm`), ale **nie ma** pakietu `gamescope` — dodanie go wymagałoby
-  własnego pakietu br2-external (Vulkan, wlroots i reszta zależności),
-  osobnego, sporego kawałka pracy. Krok D niżej to mierzalna bramka
-  decyzyjna (pomiar input lag) przed uznaniem wyboru za ostateczny.
+- **Kompozytor: `cage`, nie Sway.** Pierwotny wybór (Sway jako baseline)
+  okazał się niewykonalny bez porzucenia BusyBox init: w Buildroocie
+  2026.05.2 `BR2_PACKAGE_SWAY` ma twarde `depends on BR2_PACKAGE_SYSTEMD`
+  (sway.mk hardkoduje `-Dsd-bus-provider=libsystemd`, brak w drzewie
+  pakietu `basu` jako lżejszej alternatywy), a `BR2_PACKAGE_SYSTEMD` ma
+  z kolei `depends on BR2_INIT_SYSTEMD` — czyli systemd jako PID 1, nie
+  tylko biblioteka. Bezpośrednia kolizja z architekturą z `CLAUDE.md`.
+  `cage` (`package/cage/Config.in`) to również gotowy pakiet Buildroota
+  oparty o `wlroots`, ale **bez żadnej zależności od systemd**
+  (`CAGE_DEPENDENCIES = host-pkgconf wlroots`) — i semantycznie lepiej
+  pasuje do kiosku z jedną grą pełnoekranową niż i3-podobny tiling WM.
+  Gamescope jako warunkowa furtka pozostaje nieaktualne (nadal brak
+  pakietu w Buildroocie, nadal wymagałby własnego br2-external). Krok D
+  niżej to mierzalna bramka decyzyjna (pomiar input lag) przed uznaniem
+  `cage` za ostateczny wybór.
+- **Device management: `eudev`, nie `mdev`.** `wlroots` (ciągnięty przez
+  `cage`) ma `depends on BR2_PACKAGE_HAS_UDEV`, w tym Buildroocie
+  spełnialne bez systemd tylko przez `eudev`
+  (`BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV`, wykluczający wybór w
+  Kconfig względem `_MDEV`). Zweryfikowane w QEMU i na fizycznym ASUS-ie:
+  `eudev` poprawnie coldplaguje inne sterowniki PCI (ahci, nvme,
+  snd_hda_intel) tym samym mechanizmem modalias+kmod co wcześniej mdev —
+  kolejność startu (`S10udevd` w miejscu `S10mdev`, ten sam priorytet)
+  nie wymagała ręcznej zmiany. **Pułapka napotkana przy tej zmianie:**
+  stary plik `/etc/init.d/S10mdev` z poprzedniego builda (sprzed
+  przełączenia configu) został w `output/target/` mimo wyłączenia mdev w
+  Kconfig — Buildroot nie usuwa automatycznie plików zainstalowanych
+  przez wcześniejsze buildy przy zmianie configu. Naprawa: ręczne
+  usunięcie pliku + `make busybox-reinstall`, ten sam wzorzec co już
+  udokumentowany dla `output-initramfs/target/` w sekcji workflow.
 - **Sesja kiosku: dedykowany użytkownik `kiosk`, nie root.** Uzasadnienie:
   (1) zasada najmniejszych uprawnień z globalnych zasad kodowania autora;
   (2) `seatd` ma sens wyłącznie jako mediator dostępu do sprzętu dla
@@ -97,24 +122,54 @@ turze (zasady z `CLAUDE.md`).
   `/etc/passwd`/`/etc/group` sprawdzone pod kątem kolizji na 900 — brak
   (auto-przydzielona grupa `seat` wylądowała na 101).
 
-### Krok B — minimalna sesja Sway, fizyczny sprzęt (ASUS)
+### ⏳ Krok B — minimalna sesja `cage`, fizyczny sprzęt — **zaimplementowany, bramka zablokowana na sprzęcie**
 
-- Włącz `sway`, `mesa3d` (driver Intel — `CONFIG_DRM_I915=m` już w
-  kernelu), `wayland`, `libdrm` w defconfigu.
-- Podmień placeholder `usr/bin/osukiosk-session` na uruchomienie
-  minimalnego Swaya (bez osu!lazer — celowo osobny, mniejszy krok do
-  przetestowania w izolacji).
-- Po drodze rozwiąż faktycznie napotkane błędy zapisu (`/var/lib`,
-  `XDG_RUNTIME_DIR`, `/run/user/<uid>` itp.) przez tmpfs/symlinki w
-  `rootfs-overlay` — dokładny zestaw ścieżek poznamy z rzeczywistych
-  komunikatów błędów, nie z góry (YAGNI: nie twórz z góry wszystkich
-  możliwych punktów montowania).
+- Zaimplementowane: `cage`, `swaybg`, `mesa3d` z driverem Intel `iris`
+  (+ `BR2_PACKAGE_MESA3D_LLVM`, wymagane przez `iris`), `eudev` zamiast
+  `mdev` w defconfigu. Po drodze doszła jeszcze jedna wymagana flaga,
+  nieprzewidziana w pierwotnym planie: `BR2_TOOLCHAIN_BUILDROOT_CXX=y` —
+  bez obsługi C++ w toolchainie Kconfig po cichu usuwał całą gałąź
+  graficzną z `.config` (bez błędu), bo `BR2_INSTALL_LIBSTDCPP` był
+  niewidoczny. Toolchain zbudowany wcześniej (bez C++) trzeba było
+  ręcznie przebudować (`host-gcc-final-dirclean` + `gcc-final-dirclean`)
+  — sama zmiana Kconfig tego nie wymusza.
+- `usr/bin/osukiosk-session`: placeholder podmieniony — `XDG_RUNTIME_DIR`
+  na `/run/user/900` (już istniejące tmpfs, żadnych nowych punktów
+  montowania nie trzeba było dodawać), zrzut uprawnień do `kiosk` przez
+  `su -s /bin/sh kiosk -c ...`, `exec cage -- swaybg -c '#ff0000'`.
+- **Zweryfikowane w QEMU** (virtio-gpu, tani wstępny test): brak crashy,
+  `seatd`+`libseat`+`cage` integrują się poprawnie aż do próby KMS
+  ("Found 0 GPUs" tam jest oczekiwane — ten kernel ma tylko `i915`, nie
+  `virtio-gpu`).
+- **Zweryfikowane na fizycznym ASUS FX503VM:** `seatd`/`libseat`/`cage`
+  integrują się identycznie jak w QEMU (seat otwarty, sesja libseat
+  załadowana). **Bramka nie przechodzi** — patrz niżej.
+- **Blocker sprzętowy, nie software'owy:** diagnostyka wbudowana
+  tymczasowo w `osukiosk-session` (usunięta po zdiagnozowaniu) pokazała,
+  że na magistrali PCI tego laptopa widoczne jest wyłącznie
+  `vendor=0x10de` (NVIDIA GTX 1060) — **Intel iGPU nie jest w ogóle
+  eksponowany systemowi operacyjnemu**, nie chodzi o brakujący sterownik.
+  Sekcja "Advanced" w UEFI tego modelu nie ma żadnej opcji przełączenia
+  trybu graficznego (hybrydowy/Optimus) — iGPU jest sprzętowo
+  zablokowany przez producenta w tym konkretnym modelu. `i915.ko`,
+  `modules.alias`, `eudev --enable-kmod` — wszystko potwierdzone obecne
+  i poprawne; `ahci`/`nvme`/`snd_hda_intel` coldplugują się normalnie tym
+  samym mechanizmem, więc to nie jest defekt configu Buildroota.
+- **Decyzja (ta sesja):** FX503VM zostaje poza zakresem dalszych testów
+  fizycznych Etapu 5 — zgodnie z "Podejściem B" i decyzją o nieruszaniu
+  sterownika NVIDIA (`CLAUDE.md`, sekcja "Zaparkowane na później"; opcje
+  `nouveau` i proprietary NVIDIA driver rozważone i świadomie odrzucone
+  w tej sesji, nie tylko pominięte). **Potrzebny inny sprzęt testowy** z
+  realnie widocznym iGPU (Intel lub AMD) do dokończenia fizycznej
+  weryfikacji Kroku B. Kod jest gotowy i czeka na taki sprzęt — nie
+  wymaga dalszych zmian, tylko ponownego `dd` + boota na innej maszynie.
 - **Dlaczego fizyczny sprzęt, nie QEMU:** KMS/DRM na wirtualnym GPU QEMU to
   inna ścieżka kodu niż realny iGPU Intela. QEMU może posłużyć jedynie jako
-  tani, wstępny test "czy Sway w ogóle nie pada natychmiast" pod
-  `virtio-gpu`, przed zużyciem cyklu bootowania na ASUS-ie.
-- **Bramka:** kompozytor widoczny na realnym ekranie ASUS-a, bez pętli
-  restartów przez `respawn` (obserwacja ekranu + log z konsoli szeregowej).
+  tani, wstępny test "czy `cage` w ogóle nie pada natychmiast" pod
+  `virtio-gpu`, przed zużyciem cyklu bootowania na docelowym sprzęcie —
+  co ten krok właśnie potwierdził, że nie wystarcza samo w sobie.
+- **Bramka (wciąż otwarta):** kompozytor widoczny na realnym ekranie, bez
+  pętli restartów przez `respawn`.
 
 ### Krok C — ALSA + `snd-usb-audio`, fizyczny sprzęt
 
@@ -124,7 +179,7 @@ turze (zasady z `CLAUDE.md`).
 - **Bramka:** `aplay -l` widzi urządzenia (wbudowane HDA + podłączone USB
   audio), realne odtworzenie krótkiego testowego dźwięku na obu.
 
-### Krok D — bramka decyzyjna: pomiar input lag Sway, fizyczny sprzęt
+### Krok D — bramka decyzyjna: pomiar input lag `cage`, fizyczny sprzęt
 
 Konkretna, mierzalna metoda, nie subiektywne wrażenie:
 - Nagranie telefonem w slow-motion (120fps+) jednoczesnego fizycznego
@@ -133,7 +188,7 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
   terminala).
 - Zliczenie klatek między wejściem a reakcją, przeliczenie na ms (klatki ÷
   fps nagrania).
-- Wynik = decyzja: Sway zostaje ostatecznym wyborem, albo przechodzimy do
+- Wynik = decyzja: `cage` zostaje ostatecznym wyborem, albo przechodzimy do
   (osobno planowanego) etapu budowy własnego pakietu Gamescope dla
   Buildroota. Docelowy próg akceptowalności ustala się w momencie
   wykonania tego kroku (subiektywna ocena grywalności rhythm game przez
@@ -144,7 +199,7 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
 ### Krok E — właściwy `osukiosk-session`, fizyczny sprzęt
 
 - Zastąp placeholder finalną logiką: `seatd` (jeśli nie jest już osobnym
-  serwisem init) + Sway + docelowe miejsce na uruchomienie gry.
+  serwisem init) + `cage` + docelowe miejsce na uruchomienie gry.
 - **Poza zakresem Etapu 5:** faktyczna instalacja/uruchomienie osu!lazer
   (.NET runtime) — to naturalny następny etap; dopiero tam aktualna staje
   się rozbieżność nagłówków toolchaina 7.0 vs kernel 6.18 (patrz "Otwarte
@@ -154,8 +209,8 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
 
 ### Krytyczne pliki tego etapu
 
-- `configs/osukiosk_main_defconfig` — nowe pakiety (seatd, sway, mesa3d,
-  wayland, libdrm, alsa-lib, alsa-utils).
+- `configs/osukiosk_main_defconfig` — nowe pakiety (seatd, cage, swaybg,
+  mesa3d+iris, eudev, alsa-lib, alsa-utils).
 - `board/osukiosk/rootfs-overlay/etc/init.d/` — nowy skrypt startowy
   `seatd` (wzorem `S41mountdata`).
 - `board/osukiosk/rootfs-overlay/usr/bin/osukiosk-session` — zastąpienie
