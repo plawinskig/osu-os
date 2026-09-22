@@ -65,10 +65,15 @@ jest pustym katalogiem, a `switch_root` nie przenosi montowań z initramfs.
 **Bootloader: syslinux/extlinux, MBR** (nie GRUB, nie na razie czysty
 UEFI-GPT — działa w trybie Legacy/CSM).
 
-**Grafika/audio (docelowo, jeszcze nie zaimplementowane):** brak DE,
-`seatd` + Sway/Gamescope bezpośrednio na KMS/DRM, priorytet: minimalny input
-lag i audio latency. Audio na start: sam ALSA + `snd-usb-audio`, bez PipeWire
-(świadome uproszczenie edukacyjne, PipeWire to rozszerzenie na później).
+**Grafika/audio (docelowo, jeszcze nie zaimplementowane):** brak DE, `seatd`
++ Sway bezpośrednio na KMS/DRM jako baseline (Buildroot ma gotowy pakiet;
+Gamescope nie — wymagałby własnego pakietu br2-external), priorytet:
+minimalny input lag i audio latency. Wybór Swaya podlega mierzalnej bramce
+(pomiar input lag na fizycznym sprzęcie, szczegóły w `PROGRESS.md` → Etap 5)
+przed uznaniem go za ostateczny; jeśli nie spełni progu, Gamescope zostaje
+osobno planowanym etapem. Audio na start: sam ALSA + `snd-usb-audio`, bez
+PipeWire (świadome uproszczenie edukacyjne, PipeWire to rozszerzenie na
+później).
 
 ## Decyzje techniczne — nie podważaj bez dobrego powodu
 
