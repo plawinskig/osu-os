@@ -1,0 +1,10 @@
+# Custom users for the main system, consumed by Buildroot's mkusers via
+# BR2_ROOTFS_USERS_TABLES. Format: username uid group gid password home
+# shell groups comment (see docs/manual/makeusers-syntax.adoc upstream).
+#
+# uid/gid are pinned explicitly rather than left on auto-assignment (-1):
+# kiosk owns persistent files on /data, and auto-assigned system IDs can
+# shift between rebuilds as the set of packages that create users changes.
+#
+# name   uid  group  gid  password  home  shell  groups       comment
+kiosk    900  kiosk  900  *         -     -      video,audio  Kiosk session account, no interactive login
