@@ -3,14 +3,25 @@ mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev
 
-echo "Szukanie pendrive'a z systemem (max 10s)..."
+# Retry budget for the boot device search: USB enumeration speed varies
+# across hardware, so this needs enough margin for slower machines. Tune by
+# changing these two values only.
+RETRY_COUNT=15
+RETRY_SLEEP=2
+
+echo "Looking for the boot device (up to $((RETRY_COUNT * RETRY_SLEEP))s)..."
 mkdir -p /mnt/boot
 FOUND=0
 
-for i in 1 2 3 4 5; do
+i=0
+while [ "$i" -lt "$RETRY_COUNT" ]; do
     for dev in /dev/sd* /dev/nvme*n1p*; do
         if [ -b "$dev" ]; then
-            mount "$dev" /mnt/boot 2>/dev/null
+            # -t vfat: the boot partition is always FAT32 by design, and
+            # BusyBox mount's type autodetection would otherwise probe F2FS
+            # first (matching the data partition's filesystem), logging a
+            # harmless but noisy "Magic Mismatch" on every candidate device.
+            mount -t vfat "$dev" /mnt/boot 2>/dev/null
             if [ -f /mnt/boot/rootfs.squashfs ]; then
                 FOUND=1
                 break 2
@@ -18,15 +29,20 @@ for i in 1 2 3 4 5; do
             umount /mnt/boot 2>/dev/null
         fi
     done
-    sleep 2
+    i=$((i + 1))
+    sleep "$RETRY_SLEEP"
 done
 
-if [ $FOUND -eq 0 ]; then
-    echo "FATAL ERROR: Nie znaleziono rootfs.squashfs!"
+if [ "$FOUND" -eq 0 ]; then
+    echo "FATAL ERROR: rootfs.squashfs not found on any boot device"
+    echo "--- /proc/partitions ---"
+    cat /proc/partitions
+    echo "--- dmesg (tail) ---"
+    dmesg | tail -n 40
     exec sh
 fi
 
-echo "Kopiowanie systemu do RAM..."
+echo "Copying the system image to RAM..."
 cp /mnt/boot/rootfs.squashfs /tmp/ || exec sh
 
 mkdir -p /mnt/root
