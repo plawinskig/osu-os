@@ -41,6 +41,19 @@ start() {
         warn "failed to mount $device on $MOUNT_POINT"
         return 1
     fi
+
+    # F2FS carries real per-inode uid/gid/mode, unlike FAT, and whatever
+    # the partition's root directory happened to be formatted with (e.g.
+    # the host user who last ran mkfs.f2fs) has no relation to the target
+    # "kiosk" account. Fix ownership here, on every boot, so persistence
+    # does not depend on how data.img was created. Non-recursive: only the
+    # mount point itself can be wrong this way, since anything kiosk later
+    # creates under it already gets kiosk's uid/gid from the kernel, and
+    # walking the whole beatmap/scores tree on every boot would not be
+    # free once it grows.
+    if ! chown kiosk:kiosk "$MOUNT_POINT" || ! chmod 0700 "$MOUNT_POINT"; then
+        warn "failed to set ownership/permissions on $MOUNT_POINT"
+    fi
 }
 
 stop() {

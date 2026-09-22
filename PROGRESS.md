@@ -30,9 +30,8 @@ Stałą architekturę i konwencje trzymamy w `CLAUDE.md`, nie tutaj.
   - **D — dane:** `F2FS_FS=y`, punkt montowania `/data` w overlayu,
     `S41mountdata` szuka partycji przez `blkid` (BusyBox `mount` nie ma `-L`)
     i odmontowuje ją na `stop`.
-- ⏳ Etap 5 — stack graficzny (`seatd`, Sway, ALSA) — nierozpoczęty. Plan
-  wysokopoziomowy (Kroki A-E) i dwie wiążące decyzje — patrz sekcja
-  "Plan Etapu 5" niżej.
+- ⏳ Etap 5 — stack graficzny (`seatd`, Sway, ALSA) — **w toku, Krok A
+  zamknięty** (patrz sekcja "Plan Etapu 5" niżej, Krok B następny).
 
 ## Plan Etapu 5 — Kroki A-E
 
@@ -64,19 +63,39 @@ turze (zasady z `CLAUDE.md`).
   — nie zakładać, że zadziała bez zmian; zweryfikować to jako część bramki
   Kroku A/B.
 
-### Krok A — seatd + użytkownik `kiosk` (QEMU: czy w ogóle startuje)
+### ✅ Krok A — seatd + użytkownik `kiosk`
 
-- Włącz `seatd` w `configs/osukiosk_main_defconfig` (dokładne symbole
-  Kconfig do ustalenia przy implementacji — `grep` po
-  `buildroot/package/seatd/Config.in`).
-- Nowy skrypt startowy w `rootfs-overlay/etc/init.d/` (wzorem
-  `S41mountdata` — angielskie komentarze tłumaczące "dlaczego").
-- Dodaj użytkownika `kiosk` (bez logowania) + niezbędne grupy: do gniazda
-  `seatd` (dokładna nazwa/mechanizm z dokumentacji pakietu, do ustalenia
-  przy implementacji) i `audio` (węzły ALSA tworzone przez `mdev`).
-- **Bramka:** `seatd` startuje, nie crash-looppuje, trzyma gniazdo; `kiosk`
-  może się podłączyć z odpowiednimi uprawnieniami. Testowalne w QEMU (nie
-  wymaga realnego GPU do samego uruchomienia).
+- `configs/osukiosk_main_defconfig`: `BR2_PACKAGE_SEATD=y`,
+  `BR2_PACKAGE_SEATD_DAEMON=y` (jedyne dwa potrzebne symbole — `Config.in`
+  seatd ma tylko trzy w ogóle, trzeci to fallback bez daemona, nieużywany
+  tu), `BR2_ROOTFS_USERS_TABLES` wskazujący na nowy
+  `board/osukiosk/users-table.txt`.
+- **Brak własnego skryptu startowego.** Pakiet `seatd` sam instaluje
+  działający `/etc/init.d/S70seatd`, gdy `BR2_PACKAGE_SEATD_DAEMON=y` i
+  aktywny jest init BusyBoksa (tak jak tu) — pisanie odpowiednika
+  `S41mountdata` byłoby zbędnym duplikatem. Ten gotowy skrypt uruchamia
+  daemona z twardo wpisaną flagą `-g video`, **nie** grupą `seat`, którą
+  tworzy `SEATD_USERS` w `seatd.mk` (grupa `seat` w praktyce nie jest
+  używana przez żaden domyślny mechanizm startowy — zweryfikowane
+  bezpośrednio w źródle pakietu). `kiosk` dołącza więc do `video` (już
+  istniejącej w szkielecie Buildroota, potrzebnej też w Kroku B do
+  `/dev/dri`), nie do `seat`.
+- `board/osukiosk/users-table.txt` (nowy plik, mechanizm
+  `BR2_ROOTFS_USERS_TABLES` + `mkusers`): konto `kiosk`, uid/gid **900**
+  jawnie przypięte (nie auto — `mkusers` ostrzega, że auto-ID mogą się
+  przesunąć między rebuildami przy zmianie zestawu pakietów), bez
+  logowania, grupy dodatkowe `video,audio`.
+- `S41mountdata`: po udanym mount, nierekurencyjny `chown kiosk:kiosk` +
+  `chmod 0700` na `/data` (niefatalne przy błędzie, tym samym `warn()` co
+  reszta skryptu) — domyka zastrzeżenie o uprawnieniach `/data` z sekcji
+  "Decyzje wiążące" wyżej.
+- **Bramka zweryfikowana w QEMU** (boot bezpośredni, `bzImage` +
+  `boot.vfat`/`data.img` jako dwa osobne urządzenia USB): `seatd` żyje
+  (stabilny PID), `/run/seatd.sock` istnieje z grupą `video`, `kiosk`
+  faktycznie ma do niego dostęp zapisu, `/data` zamontowane i
+  `kiosk:kiosk 0700`. Zero `WARNING`/`FATAL`/panic w logu.
+  `/etc/passwd`/`/etc/group` sprawdzone pod kątem kolizji na 900 — brak
+  (auto-przydzielona grupa `seat` wylądowała na 101).
 
 ### Krok B — minimalna sesja Sway, fizyczny sprzęt (ASUS)
 
