@@ -276,6 +276,11 @@ czas fizycznych testów Etapu 5:
   `/data/log/cage.log`, `dmesg` → `/data/log/dmesg.txt`, oba nadpisywane
   przy każdym respawnie; fallback `/run/osukiosk-log`, gdy `/data` nie jest
   zamontowane.
+- `extlinux.conf`: `PROMPT 1` + `TIMEOUT 30` — prompt `boot:` zawsze przez
+  3 s (dowolny klawisz zatrzymuje odliczanie). Przy `PROMPT 0` pojawia się
+  tylko z wciśniętym Shiftem, a na Z570 Shift nie dawał promptu.
+  Zweryfikowane w QEMU (pełny boot przez syslinux: `osukiosk osukiosk.hold`
+  przy `boot:` trafia do `/proc/cmdline`) i na Z570.
 - `osukiosk.hold` w cmdline (przy `boot:` wpisać `osukiosk osukiosk.hold`):
   sesja nie startuje `cage`. Potrzebne, bo `seatd`
   przypina nowego klienta do aktualnie aktywnego VT (`seatd/seat.c`) — przy
@@ -354,7 +359,14 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
   `kiosk` (przyszłe parsowanie nieufnych beatmap). Teraz root ma `*` (hook
   `target-finalize` w `skeleton-init-common.mk`). Shell na tty2 działa dalej
   (`askfirst` uruchamia go `init` jako root, bez logowania), przejście
-  root → `kiosk` w `osukiosk-session` też.
+  root → `kiosk` w `osukiosk-session` też. Zweryfikowane w QEMU i na Z570:
+  `su -c id` w `foot` → `Password:` → `su: bad salt` (hash `*` nie jest
+  prawidłowym hasłem, więc odmowa niezależnie od wpisanego tekstu).
+- **Klawiatura w awaryjnym shellu (otwarte od Etapu 4):** zweryfikowana na
+  Z570 — przy `boot:` `osukiosk rdinit=/bin/sh`, pisanie działa na
+  wbudowanej klawiaturze PS/2 i na klawiaturze USB (`SERIO_I8042`,
+  `KEYBOARD_ATKBD` i `USB_HID` są wbudowane w główny kernel, więc działają
+  przed załadowaniem jakiegokolwiek modułu).
 
 ## Otwarte sprawy (odłożone do Etapu 5, świadomie)
 
@@ -366,11 +378,6 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
 - **Nagłówki toolchaina** (`BR2_KERNEL_HEADERS_7_0`, glibc `--enable-kernel=7.0`)
   są nowsze niż kernel 6.18.48. Nie blokuje bootu, ale glibc może zakładać
   syscalle nowsze niż 6.18 — rozważyć wyrównanie przed dociąganiem runtime .NET.
-- **Klawiatura w awaryjnym shellu** (objaw z ASUS-a przed poprawkami) nie była
-  ponownie testowana po Etapie 4. Wewnętrzna klawiatura PS/2 miała sterowniki
-  wbudowane od początku; do zweryfikowania na Z570: przy `boot:` wpisać
-  `osukiosk rdinit=/bin/sh` → pisanie na PS/2 i USB (albo wyjęcie
-  pendrive'a tuż po starcie kernela → po 30 s `/init` spada do `exec sh`).
 - **Brak cache shaderów Mesy:** `kiosk` ma `HOME=/`, więc Mesa próbuje
   `//.cache` na RO rootfs i wyłącza cache („Failed to create //.cache for
   shader cache”) — każdy start kompiluje shadery od nowa. Dla `cage` bez
