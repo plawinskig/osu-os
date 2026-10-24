@@ -341,6 +341,14 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
 - **Przełączanie VT z `cage` potwierdzone na Z570:** Ctrl+Alt+F2 → tty2
   (root shell) → `poweroff` działa. Wcześniejsze „Operation not permitted”
   wzięło się z `poweroff` wpisanego w `foot`, czyli jako `kiosk`.
+- **Root zablokowany (`# BR2_TARGET_ENABLE_ROOT_LOGIN is not set`):** wcześniej
+  root miał puste hasło (`root::`), a `/bin/busybox` jest instalowany jako
+  `4755` (`BUSYBOX_PERMISSIONS`), więc `su` z sesji `kiosk` dawał roota bez
+  hasła — to unieważniało granicę uprawnień, dla której powstało konto
+  `kiosk` (przyszłe parsowanie nieufnych beatmap). Teraz root ma `*` (hook
+  `target-finalize` w `skeleton-init-common.mk`). Shell na tty2 działa dalej
+  (`askfirst` uruchamia go `init` jako root, bez logowania), przejście
+  root → `kiosk` w `osukiosk-session` też.
 
 ## Otwarte sprawy (odłożone do Etapu 5, świadomie)
 
