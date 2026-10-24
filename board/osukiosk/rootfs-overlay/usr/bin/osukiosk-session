@@ -30,11 +30,55 @@ chmod 0700 "$RUNTIME_DIR"
 
 export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 
+# Wayland clients (foot now, the game later) expect a UTF-8 locale, and
+# C.UTF-8 is the only one generated into the image (BR2_GENERATE_LOCALE).
+# BusyBox su without -l passes it on to the kiosk session unchanged.
+export LANG=C.UTF-8
+
+# TEMPORARY, Stage 5 on-hardware testing only (see PROGRESS.md): a
+# laptop under test has no serial console and no network, so keep the
+# compositor's log and a kernel log snapshot on the data partition,
+# where they survive a reboot and can be read back on the development
+# machine. Falls back to tmpfs when /data is not mounted: missing
+# persistence must never keep the session from starting (the same
+# rule as in S41mountdata). Both files are overwritten on every
+# respawn, which keeps their size bounded during a crash loop.
+LOG_DIR=/data/log
+if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
+	LOG_DIR=/run/osukiosk-log
+	echo "osukiosk-session: /data not writable, logging to $LOG_DIR" > /dev/kmsg
+	mkdir -p "$LOG_DIR"
+fi
+chown kiosk:kiosk "$LOG_DIR"
+{ date; dmesg; } > "$LOG_DIR/dmesg.txt"
+# F2FS keeps only what reached a checkpoint (or was fsync'ed): after a
+# hard hang or a power cut - a realistic outcome of GPU bring-up - it
+# rolls back to the last checkpoint and these logs silently vanish.
+# Syncing here makes this snapshot durable, together with the previous
+# respawn's complete cage.log, before the redirect below truncates it.
+sync
+
+# TEMPORARY (see above): "osukiosk.hold" on the kernel command line
+# keeps the compositor from starting at all. seatd binds every new
+# client to whichever VT is active at that moment, so a crash-looping
+# cage would keep taking over the tty2 debug shell while it is in
+# use. Typed at the syslinux prompt as "osukiosk osukiosk.hold".
+if grep -qwF osukiosk.hold /proc/cmdline; then
+	exec sleep 3600
+fi
+
 # cage is a single-client kiosk compositor: it exits as soon as its
-# one client exits (crash or otherwise). swaybg just paints a solid
-# color, so the screen visibly lighting up red is this step's
-# pass/fail signal. The nested "exec" keeps the whole chain to one
-# process image (osukiosk-session -> su -> sh -> cage), so init's
-# respawn PID tracking follows cage directly: cage exiting is what
-# triggers init to restart this whole script.
-exec su -s /bin/sh kiosk -c "exec cage -- swaybg -c '#ff0000'"
+# one client exits (crash or otherwise). The test client is the foot
+# terminal: cage implements only xdg-shell (no wlr-layer-shell), so a
+# layer-shell client such as swaybg exits on start and takes cage down
+# with it. A shell prompt on the real screen that echoes typed keys is
+# this step's pass/fail signal. The nested "exec" keeps the whole
+# chain to one process image (osukiosk-session -> su -> sh -> cage),
+# so init's respawn PID tracking follows cage directly: cage exiting
+# is what triggers init to restart this whole script. "-s"
+# (TEMPORARY, see above) allows Ctrl+Alt+Fn VT switching, so the tty2
+# debug shell stays reachable while cage holds tty1. The log redirect
+# is opened here, as root, and simply inherited across su; the leading
+# date tells a log from this boot apart from one left over by an
+# earlier boot.
+exec su -s /bin/sh kiosk -c "date >&2; exec cage -s -- foot /bin/sh" 2> "$LOG_DIR/cage.log"
