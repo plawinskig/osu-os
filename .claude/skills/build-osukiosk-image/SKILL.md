@@ -32,12 +32,13 @@ run `make` (main system) or the relevant kernel rebuild first if sources changed
    does not reach the image (the old `boot-files/` directory held only stale
    copies and was removed).
 
-2. **Check the FAT32 volume label.** Any label used for the boot partition in
-   `genimage-osukiosk.cfg` and in `initramfs-overlay/init` must be **≤ 11
-   characters** (FAT32 hard limit). Current label: `OSUBOOT`. If you ever change
-   it, you must update it in both places and rebuild the initramfs `/init`
-   script (re-run the initramfs build) before rebuilding the image — a mismatch
-   here silently breaks partition lookup at boot.
+2. **Check the FAT volume label.** The boot partition label lives only in
+   `genimage-osukiosk.cfg` (currently `OSUBOOT`) and must be **≤ 11
+   characters** (FAT hard limit, FAT16 and FAT32 alike). Nothing looks the
+   partition up by its label: the initramfs `/init` iterates over `/dev/sd*`
+   and `/dev/nvme*n1p*`, mounts each candidate as vfat and boots from the
+   first one that has `rootfs.squashfs` at its root. Changing the label
+   therefore needs no initramfs rebuild.
 
 3. **Run genimage:**
    ```bash
@@ -101,8 +102,9 @@ run `make` (main system) or the relevant kernel rebuild first if sources changed
 ## Common failure signature
 
 If genimage succeeds but the resulting image doesn't boot or doesn't find the
-boot partition, check in this order: (1) label length/mismatch between
-`genimage-osukiosk.cfg` and `initramfs-overlay/init`, (2) whether step 5 was
+boot partition, check in this order: (1) whether the boot partition holds
+`rootfs.squashfs` at its root, which is what `/init` looks for (see step 2),
+(2) whether step 5 was
 run against the final `.img` and not the intermediate `boot.vfat`, (3) whether
 `board/osukiosk/` actually contains the freshly rebuilt `bzImage` and
 `rootfs.squashfs` (stale copies are a frequent silent-cause here; the

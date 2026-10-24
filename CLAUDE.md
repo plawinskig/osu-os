@@ -225,10 +225,28 @@ są jego rodzeństwem (`../buildroot`, `../output-initramfs`).
    tam (katalog `boot-files/` był nieużywany i zawierał tylko stare kopie —
    usunięty, nie odtwarzaj go). Krok
    `extlinux --install` wymaga `sudo` — uruchamia go autor.
-4. **Test w QEMU przed pendrive'em** (`qemu-system-x86_64`, `snapshot=on` chroni
-   obraz): boot bezpośredni `-kernel ../buildroot/output/images/bzImage -append
-   "console=tty1 console=ttyS0 loglevel=7"` + `-device qemu-xhci -device
-   usb-storage,drive=…` daje log na serialu; sesja na `tty1` widoczna przez
-   `screendump` z monitora. Pełny boot przez syslinux: ten sam obraz bez `-kernel`,
-   z `bootindex=0` na urządzeniu USB (cmdline z `extlinux.conf`). Ścieżka gniazda
-   monitora musi być krótsza niż 108 B (użyj ścieżki względnej).
+4. **Test w QEMU przed pendrive'em:** `board/osukiosk/qemu-test.sh` (użycie i
+   gotowe przykłady w nagłówku skryptu).
+   - `direct <nazwa> [czekanie-s] [-- komendy…]` bootuje `bzImage`
+     bezpośrednio (`boot.vfat` + rzadka kopia `data.img` jako dwa pendrive'y
+     USB, log kernela na serialu); `syslinux <nazwa> …` bootuje cały
+     `osukiosk.img` przez SeaBIOS + syslinux (`snapshot=on`), a `BOOT_LINE`
+     wpisuje przy `boot:`. Komendy po `--` trafiają klawisz po klawiszu
+     (`sendkey` przez monitor) do shella roota na tty2. Zrzuty ekranu (PNG),
+     log seriala i kopia danych lądują w gitignorowanym
+     `board/osukiosk/qemu-artifacts/`; QEMU nigdy nie pisze do `data.img` ani
+     `output/osukiosk.img`. Własne wywołania QEMU: gniazdo monitora po
+     ścieżce względnej (limit 108 B).
+   - Diagnoza: `CMDLINE_EXTRA=osukiosk.hold` — sesja nie startuje `cage`,
+     więc shell na tty2 jest stabilny. Na sprzęcie to samo daje wpisanie
+     `osukiosk osukiosk.hold` przy `boot:`.
+   - `cage` bez GPU: `WLR_BACKENDS=headless,libinput WLR_HEADLESS_OUTPUTS=1
+     WLR_RENDERER=pixman` (prawdziwa klawiatura maszyny przez libinput).
+   - Emulowane audio: `QEMU_EXTRA='-audiodev none,id=snd0 -device intel-hda
+     -device hda-duplex,audiodev=snd0'`.
+   - Koniec przebiegu (`quit`) działa na gościa jak wyrwanie zasilania: F2FS
+     cofa `/data` do ostatniego checkpointu, przetrwa tylko to, co
+     zsynchronizowane.
+   - Kernel nie ma `virtio-gpu`, więc przy normalnym boocie `cage` w QEMU po
+     ok. 10 s kończy się „Found 0 GPUs” i `init` restartuje sesję — to
+     oczekiwane, nie błąd.
