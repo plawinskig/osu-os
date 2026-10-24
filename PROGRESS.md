@@ -367,6 +367,10 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
   wbudowanej klawiaturze PS/2 i na klawiaturze USB (`SERIO_I8042`,
   `KEYBOARD_ATKBD` i `USB_HID` są wbudowane w główny kernel, więc działają
   przed załadowaniem jakiegokolwiek modułu).
+- **Narzędzia QEMU w repo:** `board/osukiosk/qemu-test.sh` (tryby `direct` i
+  `syslinux`, komendy na tty2 przez `sendkey`, artefakty w gitignorowanym
+  `qemu-artifacts/`, QEMU nie pisze do `data.img` ani `output/osukiosk.img`)
+  zastępuje `run-qemu-smoketest.sh`, który pisał prosto do `data.img`.
 
 ## Otwarte sprawy (odłożone do Etapu 5, świadomie)
 

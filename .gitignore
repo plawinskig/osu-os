@@ -7,3 +7,4 @@ board/osukiosk/rootfs.squashfs
 *.vfat
 .claude/*
 !.claude/skills/
+board/osukiosk/qemu-artifacts/
