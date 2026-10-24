@@ -338,6 +338,12 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
 ## Domknięte w tej sesji (24.10.2026)
 
 - **Sprzęt testowy:** Lenovo IdeaPad Z570 zamiast ASUS-a (patrz wyżej).
+- **`CLAUDE.md`:** Sway → `cage`, `mdev` → `eudev`, usunięte sprzeczne
+  zdanie o bezwzględnej ścieżce `CONFIG_INITRAMFS_SOURCE`, poprawione
+  uzasadnienie glibc (osu!lazer to osu-framework na SDL + BASS, nie
+  Avalonia/Skia), dopisana pułapka z `make defconfig`: bez `BR2_DEFCONFIG=`
+  w linii poleceń generuje `.config` z samych wartości domyślnych —
+  właściwe polecenie to `make osukiosk_main_defconfig`.
 - **Przełączanie VT z `cage` potwierdzone na Z570:** Ctrl+Alt+F2 → tty2
   (root shell) → `poweroff` działa. Wcześniejsze „Operation not permitted”
   wzięło się z `poweroff` wpisanego w `foot`, czyli jako `kiosk`.

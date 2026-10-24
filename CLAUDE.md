@@ -36,7 +36,7 @@ z RAM-u.
 Drivery fundamentalne dla samego bootu (VFS, tmpfs, squashfs, overlayfs, ACPI,
 SMP) są wbudowane na stałe (`=y`). Drivery specyficzne dla konkretnego sprzętu
 (GPU, audio, storage, USB, input) są modułami (`=m`) ładowanymi dynamicznie
-przez `mdev` na podstawie realnie wykrytego sprzętu — jak w Live USB dystrybucji
+przez `eudev` na podstawie realnie wykrytego sprzętu — jak w Live USB dystrybucji
 typu Ubuntu/Arch. **Wyjątek:** cokolwiek co musi działać już wewnątrz initramfs,
 zanim `switch_root` się wykona (np. USB storage, FAT32, klawiatura do awaryjnego
 shella), musi być wbudowane na stałe w GŁÓWNYM kernelu — initramfs nie ma
@@ -44,7 +44,8 @@ mechanizmu ładowania modułów z zewnątrz siebie. Aktualnie wbudowane (`=y`) z
 powodu: rdzeń USB (`USB`, xHCI/EHCI + ich `*_PCI`, `USB_STORAGE`, `USB_HID`,
 `HID_GENERIC`), FAT/VFAT + NLS, squashfs (z `SQUASHFS_XZ`), loop, `F2FS_FS`
 (partycja danych). Potwierdzone na ASUS FX503VM: SATA/AHCI i inne moduły
-ładują się już po `switch_root` przez coldplug `mdev` (podejście B działa).
+ładują się już po `switch_root` przez coldplug (najpierw `mdev`, od Etapu 5
+`eudev` — ten sam mechanizm modalias + kmod; podejście B działa).
 
 **Read-Only rootfs + trwała partycja danych.** `rootfs.squashfs` jest z natury
 RO i kopiowany do RAM — odporny na nagłą utratę zasilania. Osobna partycja
@@ -65,20 +66,24 @@ jest pustym katalogiem, a `switch_root` nie przenosi montowań z initramfs.
 **Bootloader: syslinux/extlinux, MBR** (nie GRUB, nie na razie czysty
 UEFI-GPT — działa w trybie Legacy/CSM).
 
-**Grafika/audio (docelowo, jeszcze nie zaimplementowane):** brak DE, `seatd`
-+ Sway bezpośrednio na KMS/DRM jako baseline (Buildroot ma gotowy pakiet;
-Gamescope nie — wymagałby własnego pakietu br2-external), priorytet:
-minimalny input lag i audio latency. Wybór Swaya podlega mierzalnej bramce
-(pomiar input lag na fizycznym sprzęcie, szczegóły w `PROGRESS.md` → Etap 5)
-przed uznaniem go za ostateczny; jeśli nie spełni progu, Gamescope zostaje
-osobno planowanym etapem. Audio na start: sam ALSA + `snd-usb-audio`, bez
-PipeWire (świadome uproszczenie edukacyjne, PipeWire to rozszerzenie na
-później).
+**Grafika/audio (Etap 5, w toku):** brak DE, `seatd` + `cage` (kompozytor
+kiosk na `wlroots`, jedna aplikacja pełnoekranowa) bezpośrednio na KMS/DRM,
+priorytet: minimalny input lag i audio latency. Sway odpadł, bo w tym
+Buildroocie wymaga systemd jako PID 1; Gamescope nie ma pakietu (wymagałby
+własnego pakietu br2-external) — szczegóły w `PROGRESS.md` → Etap 5. Wybór
+`cage` podlega mierzalnej bramce (pomiar input lag na fizycznym sprzęcie,
+Krok D) przed uznaniem go za ostateczny; jeśli nie spełni progu, Gamescope
+zostaje osobno planowanym etapem. Mesa: Gallium `crocus` (Intel Gen4–7.5)
++ `iris` (Gen8+). Audio na start: sam ALSA (sterowniki kodeków HDA +
+`snd-usb-audio` jako moduły), bez PipeWire (świadome uproszczenie
+edukacyjne, PipeWire to rozszerzenie na później).
 
 ## Decyzje techniczne — nie podważaj bez dobrego powodu
 
-- **C library: glibc**, nie musl — osu!lazer to aplikacja .NET (Avalonia/Skia),
-  ryzyko niestabilności natywnych bindingów na musl uznano za nieopłacalne.
+- **C library: glibc**, nie musl — osu!lazer to aplikacja .NET (osu-framework
+  na SDL) z natywnymi bibliotekami budowanymi pod glibc (np. własnościowy BASS
+  do audio), ryzyko niestabilności natywnych bindingów na musl uznano za
+  nieopłacalne.
 - **Target Architecture Variant: generic x86-64** — celowo NIE konkretna
   mikroarchitektura (skylake/icelake itp.), złamałoby to uniwersalność.
 - Initramfs budowany jako **osobna konfiguracja Buildroota** w osobnym
@@ -102,9 +107,7 @@ później).
 - **Config kernela main systemu:** źródłem prawdy jest `board/osukiosk/linux.config`
   (savedefconfig), podłączony w `configs/osukiosk_main_defconfig` przez
   `BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG`. Edytujesz ten plik, `make -C ../buildroot`
-  regeneruje z niego `.config` kernela. `CONFIG_INITRAMFS_SOURCE` wskazuje
-  na `../output-initramfs/images/rootfs.cpio`, ale w samym `linux.config` jest to
-  ścieżka bezwzględna, zależna od maszyny.
+  regeneruje z niego `.config` kernela.
 - Initramfs: linkowanie **"shared only"**, nie static — Buildroot blokuje pełny
   static link z glibc ze względu na NSS (`libnss_*.so` doładowywane
   dynamicznie nawet w binarkach pozornie statycznych). To ograniczenie glibc,
@@ -208,6 +211,15 @@ są jego rodzeństwem (`../buildroot`, `../output-initramfs`).
    `busybox-reinstall`. Potem obowiązkowo `make -C ../buildroot linux-rebuild`, żeby
    kernel wchłonął nowe `rootfs.cpio`.
 2. **Main system:** `make -C ../buildroot` (kernel + moduły + `rootfs.squashfs`).
+   Po edycji `configs/osukiosk_main_defconfig` najpierw `make -C ../buildroot
+   osukiosk_main_defconfig` — **nie** `make defconfig`: ten bierze
+   `BR2_DEFCONFIG` wyłącznie z linii poleceń i bez niego generuje `.config` z
+   samych wartości domyślnych Buildroota (trafione raz w Etapie 5). Buildroot
+   nie przebudowuje sam już zbudowanego pakietu po zmianie jego opcji (np.
+   listy sterowników Mesy) — potrzebny `make -C ../buildroot <pakiet>-reconfigure`.
+   Po buildzie `make -C ../buildroot savedefconfig` + `git diff configs/`: diff
+   ma pokazać wyłącznie zamierzone linie (Kconfig potrafi po cichu wyciąć
+   zależne opcje).
 3. **Obraz:** skill `build-osukiosk-image`. Uwaga: `genimage` czyta pliki z
    `board/osukiosk/` (`--inputpath .`), więc `bzImage` i `rootfs.squashfs` kopiujemy
    tam (katalog `boot-files/` był nieużywany i zawierał tylko stare kopie —
