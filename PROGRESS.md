@@ -30,9 +30,9 @@ Stałą architekturę i konwencje trzymamy w `CLAUDE.md`, nie tutaj.
   - **D — dane:** `F2FS_FS=y`, punkt montowania `/data` w overlayu,
     `S41mountdata` szuka partycji przez `blkid` (BusyBox `mount` nie ma `-L`)
     i odmontowuje ją na `stop`.
-- ⏳ Etap 5 — stack graficzny (`seatd`, `cage`, ALSA) — **w toku: Kroki A,
-  B i C zamknięte (B i C na Lenovo IdeaPad Z570, 24.10.2026); zostają D
-  (pomiar input lag) i E (właściwa sesja)** (patrz „Sprzęt testowy” i
+- ⏳ Etap 5 — stack graficzny (`seatd`, `cage`, ALSA) — **w toku: Kroki A–D
+  zamknięte (B i C na Lenovo IdeaPad Z570 24.10.2026, D tamże 5.11.2026:
+  `cage` zostaje); został E (właściwa sesja)** (patrz „Sprzęt testowy” i
   „Plan Etapu 5” niżej).
 
 ## Sprzęt testowy Etapu 5 — Lenovo IdeaPad Z570
@@ -98,10 +98,10 @@ turze (zasady z `CLAUDE.md`).
   oparty o `wlroots`, ale **bez żadnej zależności od systemd**
   (`CAGE_DEPENDENCIES = host-pkgconf wlroots`) — i semantycznie lepiej
   pasuje do kiosku z jedną grą pełnoekranową niż i3-podobny tiling WM.
-  Gamescope jako warunkowa furtka pozostaje nieaktualne (nadal brak
-  pakietu w Buildroocie, nadal wymagałby własnego br2-external). Krok D
-  niżej to mierzalna bramka decyzyjna (pomiar input lag) przed uznaniem
-  `cage` za ostateczny wybór.
+  Bramka Kroku D zaliczona (5.11.2026): `cage` jest ostatecznym wyborem.
+  Gamescope odpada także sprzętowo: wymaga Vulkana, a HD 3000 (Gen6) nie
+  ma w Mesie żadnego sterownika Vulkan (`hasvk` zaczyna od Ivy Bridge,
+  `anv` od Gen9).
 - **Device management: `eudev`, nie `mdev`.** `wlroots` (ciągnięty przez
   `cage`) ma `depends on BR2_PACKAGE_HAS_UDEV`, w tym Buildroocie
   spełnialne bez systemd tylko przez `eudev`
@@ -131,7 +131,10 @@ turze (zasady z `CLAUDE.md`).
   uprawnienia partycji `/data` (dziś montowanej i używanej jako root w
   `S41mountdata`) trzeba dopasować, żeby `kiosk` mógł tam zapisywać wyniki
   — nie zakładać, że zadziała bez zmian; zweryfikować to jako część bramki
-  Kroku A/B.
+  Kroku A/B. Root jest zablokowany (`# BR2_TARGET_ENABLE_ROOT_LOGIN is not
+  set`, hash `*`): przy pustym haśle `su` z sesji `kiosk` dawało roota,
+  bo `/bin/busybox` ma `4755`, co znosiło tę granicę. Shell na tty2 działa
+  dalej (`askfirst` startuje go `init` jako root, bez logowania).
 
 ### ✅ Krok A — seatd + użytkownik `kiosk`
 
@@ -299,31 +302,98 @@ czas fizycznych testów Etapu 5:
   log z bieżącego bootu od pozostałości po poprzednim.
 - Odczyt logów na hoście wymaga `sudo` (`/data` to `kiosk:kiosk 0700`);
   logi trzeba zabrać przed kolejnym `dd`, który nadpisuje partycję danych.
+- `latency-probe` i `latency-probe-vt` (`BR2_PACKAGE_LATENCY_PROBE`, źródła
+  w `src/latency-probe/`): narzędzia pomiarowe Kroku D. W Kroku E wyłączyć
+  je w defconfigu; pakiet zostaje w drzewie do ponownych pomiarów (np. z
+  grą albo po zmianie kompozytora).
 
-### Krok D — bramka decyzyjna: pomiar input lag `cage`, fizyczny sprzęt
+### ✅ Krok D — bramka decyzyjna: pomiar input lag `cage`, fizyczny sprzęt — **zaliczony na Z570 (5.11.2026): `cage` zostaje bez zmian**
 
-Konkretna, mierzalna metoda, nie subiektywne wrażenie:
-- Nagranie telefonem w slow-motion (120fps+) jednoczesnego fizycznego
-  naciśnięcia klawisza/kliknięcia i widocznej reakcji na ekranie (prosty
-  program testowy zmieniający kolor/pole po wejściu, albo migający kursor
-  terminala).
-- Zliczenie klatek między wejściem a reakcją, przeliczenie na ms (klatki ÷
-  fps nagrania).
-- Wynik = decyzja: `cage` zostaje ostatecznym wyborem, albo przechodzimy do
-  (osobno planowanego) etapu budowy własnego pakietu Gamescope dla
-  Buildroota. Docelowy próg akceptowalności ustala się w momencie
-  wykonania tego kroku (subiektywna ocena grywalności rhythm game przez
-  autora, nie coś do wymyślenia z góry w tym planie).
-- Ten krok nie generuje commitu sam w sobie (pomiar/decyzja, nie zmiana
-  kodu) — wynik dopisać do tej sekcji `PROGRESS.md`.
+- **Metoda (wykonana):**
+  - Pomiar programowy: `latency-probe` (`src/latency-probe/`, pakiet
+    br2-external), pełnoekranowy klient `wl_shm`, który przełącza cały
+    ekran czarny↔biały przy każdym wciśnięciu. Mierzy czas od znacznika
+    zdarzenia w kernelu (`wl_keyboard`/`wl_pointer`, CLOCK_MONOTONIC,
+    1 ms) do `wp_presentation` (page flip, czyli początek skanowania).
+    Tryby: `idle` (rysuje tylko po wejściu, jak `foot`), `mailbox` (gra
+    bez vsync: pętla klatek, wciśnięcie rysowane od razu) i `vsync` (gra z
+    vsync: zmiana dopiero w klatce po `frame_done`). Odniesienie bez
+    kompozytora: `latency-probe-vt` (DECSCNM na tty2). Sonda startuje z
+    `foot` jako drugi klient `cage`.
+  - Kamera: Pixel 10, Slow Motion 1/8x, realnie **239,69 kl./s**
+    (zmierzone względem zegara laptopa; plik spowolniony dokładnie 8,000×,
+    bez zgubionych klatek). Błysk to pierwsza klatka ze zmianą w dowolnym
+    z 23 pasów wycinka ekranu (30 z 30 w każdym filmie). Wciśnięcie (runda
+    2): stuknięcie długopisem w Z. Chwila pochodzi z dźwięku uderzenia,
+    poprawionego jedną stałą na film z obrazu (mediana klatki
+    najszybszego ruchu klawisza), bo przesunięcie audio/wideo telefonu
+    jest w każdym nagraniu inne (do ok. 9 ms). W rundzie 1 (palcem)
+    wciśnięcia nie dało się wyznaczyć: klawisz na nagraniu się nie rusza,
+    a stuk ginie w szumie.
+  - Narzędzia rundy i analizy leżą poza repo, w
+    `../measurements/stage5-step-d/`: `round.sh` (kroki rundy uruchamiane z
+    `/data`), `upload-round.sh`, `copy-logs.sh` oraz `analysis*/` (ffmpeg +
+    Python stdlib).
+- **Warunki:** LVDS 1366×768 @ 60,042 Hz (T = 16,65 ms), governor
+  `performance` (`intel_cpufreq` w trybie passive, 2,2 GHz, i3-2330M bez
+  turbo), GPU 650 MHz w spoczynku, klawiatura wbudowana PS/2, mysz
+  SteelSeries Rival 110. N = 30 na przebieg (programowo także 186 i 2×50).
+- **Programowo, kernel → prezentacja, mediana [min–max] w ms** (runda 1 /
+  runda 2):
+  - `idle`: 12,4 [6,9–21,1] / 10,7 [5,4–20,3]; przy N = 186: [4,5–21,7]
+  - `mailbox`: 25,3 [18,7–34,7] / 27,4 [18,9–35,0]
+  - `vsync`: 43,4 [34,3–51,5] / 41,9 [34,5–49,9]
+  - Wyniki zgadzają się z modelem. `idle` ≈ 4,5 + U(0,T) (render i commit
+    `cage` na HD 3000). `mailbox` ≈ 2 + T + U(0,T): gotowa klatka czeka w
+    `cage` jedno odświeżenie, bo `cage` renderuje tuż po vblanku.
+    `vsync` ≈ 1,5 + 2T + U(0,T). SD 4,4–5,5 ms to sama faza 60 Hz
+    (T/√12 = 4,8 ms), więc `cage` nie dokłada własnego jittera. Od kernela
+    do klienta mija < 1 ms. `schedutil` zamiast `performance` nic nie
+    zmienia (`mailbox` 25,8 / 27,6), a mysz przechodzi przez kompozytor
+    tak samo jak klawiatura (`mailbox` 25,6 / 26,2).
+- **Kamera (runda 2), od dobicia klawisza do zmiany obrazu w dolnej części
+  ekranu, mediana (p10–p90) w ms:** konsola bez kompozytora 27 (22–35),
+  `idle` 45 (32–52), `mailbox` 55 (45–66), `vsync` 71 (58–79). Na środku
+  ekranu `cage` wychodzi ok. 3 ms szybciej, bo skanowanie dochodzi do
+  obserwowanego obszaru ok. 11 ms po górnej krawędzi. Konsoli to nie
+  dotyczy, bo rysuje bez czekania na vblank.
+  - Klawiatura + wyświetlanie (kamera minus sonda): 33 / 30 / 28 ms w
+    trzech filmach, czyli metoda jest spójna w granicach ok. ±2,5 ms.
+    Podział z geometrii kadru: wyświetlanie ok. 13 ms (skanowanie i
+    reakcja matrycy), **klawiatura laptopa ok. 15–18 ms z rozrzutem ±6 ms
+    (SD)**. To największy jitter w całym łańcuchu, niezależny od
+    kompozytora.
+  - Od page flipa do widocznej zmiany mija stały czas (reszty dopasowania
+    1,3–1,9 ms, czyli samo kwantowanie klatek). Panel nie dokłada ani
+    klatki opóźnienia, ani jittera.
+- **Niezmierzone:** porównanie myszy 125 i 1000 Hz. Rival 110 ma natywnie
+  1 kHz (rozrzut od kliknięcia do kernela 0,4 ms), więc
+  `usbhid.mousepoll=1` nic dla niej nie zmienia. Efekt dla myszy 125 Hz
+  wymagałby takiej myszy.
+- **Decyzja autora (5.11.2026): `cage` zostaje bez zmian.** 55 ms od
+  wciśnięcia do obrazu w grze bez vsync jest akceptowalne. Łatka do
+  `cage` (render tuż przed vblankiem, ok. −14 ms) nie usunęłaby głównego
+  źródła rozrzutu, czyli klawiatury laptopa (±6 ms), a osu! liczy
+  trafienia z czasu wejścia (od kernela do klienta < 1 ms). Gamescope i
+  tak odpada na Z570 (brak Vulkana na Gen6).
+- **Wskazówka na etap z grą:** renderować bez vsync (w `cage` to 25 ms
+  zamiast 43). Do poważnego grania zewnętrzna klawiatura USB 1000 Hz
+  prawdopodobnie zmniejszyłaby i opóźnienie, i rozrzut wejścia.
 
 ### Krok E — właściwy `osukiosk-session`, fizyczny sprzęt
 
 - Zastąp placeholder finalną logiką: `cage` + docelowe miejsce na
   uruchomienie gry (`seatd` jest już osobnym serwisem: `S70seatd`).
 - Decyzja o pakiecie diagnostycznym (shell na tty2 do usunięcia, `-s`
-  raczej też, logi: trwały i ograniczony wariant albo out) oraz przywracanie
-  stanu miksera (`alsactl`; stan na RO rootfs czy na `/data`).
+  raczej też, logi: trwały i ograniczony wariant albo out, `latency-probe`
+  wyłączyć w defconfigu) oraz przywracanie stanu miksera (`alsactl`; stan
+  na RO rootfs czy na `/data`).
+- **Domyślny governor CPU:** `linux.config` ma
+  `CPU_FREQ_DEFAULT_GOV_USERSPACE=y`, a `intel_pstate` na Z570 działa w
+  trybie passive (i3-2330M nie ma HWP). Po boocie CPU stoi więc na
+  **800 MHz** (`cpu-default.txt` z Kroku D). Przed grą wybrać domyślny
+  governor (`performance` albo `schedutil`; w Kroku D `schedutil` nie
+  pogorszył opóźnień).
 - **Poza zakresem Etapu 5:** faktyczna instalacja/uruchomienie osu!lazer
   (.NET runtime) — to naturalny następny etap; dopiero tam aktualna staje
   się rozbieżność nagłówków toolchaina 7.0 vs kernel 6.18 (patrz "Otwarte
@@ -339,38 +409,22 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
 - `board/osukiosk/rootfs-overlay/usr/bin/osukiosk-session` — sesja.
 - `board/osukiosk/rootfs-overlay/etc/inittab` — respawn sesji, tymczasowy
   shell na tty2.
+- `src/latency-probe/`, `package/latency-probe/` — sonda Kroku D (DEV ONLY).
 
-## Domknięte w tej sesji (24.10.2026)
+## Domknięte w tej sesji (4–5.11.2026)
 
-- **Sprzęt testowy:** Lenovo IdeaPad Z570 zamiast ASUS-a (patrz wyżej).
-- **`CLAUDE.md`:** Sway → `cage`, `mdev` → `eudev`, usunięte sprzeczne
-  zdanie o bezwzględnej ścieżce `CONFIG_INITRAMFS_SOURCE`, poprawione
-  uzasadnienie glibc (osu!lazer to osu-framework na SDL + BASS, nie
-  Avalonia/Skia), dopisana pułapka z `make defconfig`: bez `BR2_DEFCONFIG=`
-  w linii poleceń generuje `.config` z samych wartości domyślnych —
-  właściwe polecenie to `make osukiosk_main_defconfig`.
-- **Przełączanie VT z `cage` potwierdzone na Z570:** Ctrl+Alt+F2 → tty2
-  (root shell) → `poweroff` działa. Wcześniejsze „Operation not permitted”
-  wzięło się z `poweroff` wpisanego w `foot`, czyli jako `kiosk`.
-- **Root zablokowany (`# BR2_TARGET_ENABLE_ROOT_LOGIN is not set`):** wcześniej
-  root miał puste hasło (`root::`), a `/bin/busybox` jest instalowany jako
-  `4755` (`BUSYBOX_PERMISSIONS`), więc `su` z sesji `kiosk` dawał roota bez
-  hasła — to unieważniało granicę uprawnień, dla której powstało konto
-  `kiosk` (przyszłe parsowanie nieufnych beatmap). Teraz root ma `*` (hook
-  `target-finalize` w `skeleton-init-common.mk`). Shell na tty2 działa dalej
-  (`askfirst` uruchamia go `init` jako root, bez logowania), przejście
-  root → `kiosk` w `osukiosk-session` też. Zweryfikowane w QEMU i na Z570:
-  `su -c id` w `foot` → `Password:` → `su: bad salt` (hash `*` nie jest
-  prawidłowym hasłem, więc odmowa niezależnie od wpisanego tekstu).
-- **Klawiatura w awaryjnym shellu (otwarte od Etapu 4):** zweryfikowana na
-  Z570 — przy `boot:` `osukiosk rdinit=/bin/sh`, pisanie działa na
-  wbudowanej klawiaturze PS/2 i na klawiaturze USB (`SERIO_I8042`,
-  `KEYBOARD_ATKBD` i `USB_HID` są wbudowane w główny kernel, więc działają
-  przed załadowaniem jakiegokolwiek modułu).
-- **Narzędzia QEMU w repo:** `board/osukiosk/qemu-test.sh` (tryby `direct` i
-  `syslinux`, komendy na tty2 przez `sendkey`, artefakty w gitignorowanym
-  `qemu-artifacts/`, QEMU nie pisze do `data.img` ani `output/osukiosk.img`)
-  zastępuje `run-qemu-smoketest.sh`, który pisał prosto do `data.img`.
+- **Krok D zamknięty:** `cage` zostaje (wyniki i decyzja w sekcji Krok D).
+- **`latency-probe`:** pierwszy pakiet tego br2-external (metadane w
+  `package/`, źródła w `src/`, `_SITE_METHOD = local`). Zweryfikowany w
+  QEMU (`cage` headless z rendererem pixman, sonda uruchomiona z `foot`)
+  przed rundami na Z570.
+- **`qemu-test.sh`:** kroki `mon:<komenda>`, czyli surowe komendy monitora
+  QEMU (pojedynczy klawisz, przycisk myszy, dodatkowy zrzut ekranu) między
+  wpisywanymi liniami.
+- **`scaling_cur_freq` to pomiar, nie cel governora:** średnia z liczników
+  APERF/MPERF z ostatniego tyknięcia rdzenia (`arch_freq_get_on_cpu`). Przy
+  `performance` daje ok. 2195000 kHz (zegar TSC tego CPU), a równe 2200000
+  tylko dla rdzenia uśpionego dłużej niż 20 ms.
 
 ## Otwarte sprawy (odłożone do Etapu 5, świadomie)
 
@@ -396,3 +450,8 @@ Konkretna, mierzalna metoda, nie subiektywne wrażenie:
   `MESA3D_OPENCL` wciąga clang do targetu, choć `libgallium` linkuje tylko
   `libLLVM`. `rootfs.squashfs` mieści się w 256 MB partycji boot i w RAM,
   więc nie blokuje; kandydat do odchudzenia przy pomiarach bootu/RAM.
+- **Częstotliwość pod `performance`:** sonda dwa razy zmierzyła na cpu0
+  tylko 1,5 i 2,0 GHz (`scaling_cur_freq`), długo po przełączeniu
+  governora. Przyczyna nieznana: wybudzanie z głębokich C-states albo
+  dławienie przez kontroler laptopa (np. na baterii). Na opóźnienia nie
+  wpłynęło; sprawdzić pod obciążeniem przed etapem z grą.

@@ -71,9 +71,11 @@ kiosk na `wlroots`, jedna aplikacja pełnoekranowa) bezpośrednio na KMS/DRM,
 priorytet: minimalny input lag i audio latency. Sway odpadł, bo w tym
 Buildroocie wymaga systemd jako PID 1; Gamescope nie ma pakietu (wymagałby
 własnego pakietu br2-external) — szczegóły w `PROGRESS.md` → Etap 5. Wybór
-`cage` podlega mierzalnej bramce (pomiar input lag na fizycznym sprzęcie,
-Krok D) przed uznaniem go za ostateczny; jeśli nie spełni progu, Gamescope
-zostaje osobno planowanym etapem. Mesa: Gallium `crocus` (Intel Gen4–7.5)
+`cage` przeszedł mierzalną bramkę (Krok D, 5.11.2026). Na Z570 od wciśnięcia
+do obrazu w grze bez vsync mija ok. 55 ms, z czego jedna klatka to
+kolejkowanie w `cage`; największy rozrzut daje klawiatura laptopa, nie
+kompozytor. Gamescope odpada także sprzętowo: wymaga Vulkana, a Intel Gen6
+(HD 3000) nie ma w Mesie sterownika Vulkan. Mesa: Gallium `crocus` (Intel Gen4–7.5)
 + `iris` (Gen8+). Audio na start: sam ALSA (sterowniki kodeków HDA +
 `snd-usb-audio` jako moduły), bez PipeWire (świadome uproszczenie
 edukacyjne, PipeWire to rozszerzenie na później).
