@@ -18,6 +18,10 @@
 #   After <boot-wait-s> (default 60) tty1 is screendumped. Each
 #   tty2-command is then typed key by key, through the QEMU monitor, into
 #   the tty2 root shell (inittab askfirst), and tty2 is screendumped last.
+#   A tty2-command of the form mon:<command> is not typed: <command> goes
+#   to the QEMU monitor as it is (a single key such as "sendkey esc", a
+#   "mouse_button 1", or an extra "screendump qemu-artifacts/<name>-x.ppm",
+#   which is converted to PNG like the others).
 #
 # Environment:
 #   CMDLINE_EXTRA  extra kernel parameters, direct mode (e.g. osukiosk.hold)
@@ -59,6 +63,12 @@
 #       'su -s /bin/sh kiosk -c "export XDG_RUNTIME_DIR=/run/user/900 LANG=C.UTF-8 WLR_BACKENDS=headless,libinput WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman; cage -- foot /bin/sh 2>/data/log/cage-kbd.log & sleep 10; kill \$!"' \
 #       'touch /run/user/900/typed-ok' \
 #       'ls -l /run/user/900/typed-ok'
+#
+#   # Raw monitor commands between typed lines: back to tty1 for an extra
+#   # screendump in the middle of the run, then on in the tty2 shell.
+#   CMDLINE_EXTRA=osukiosk.hold board/osukiosk/qemu-test.sh direct mon 60 -- \
+#       'mon:sendkey ctrl-alt-f1' 'mon:screendump qemu-artifacts/mon-tty1-again.ppm' \
+#       'mon:sendkey ctrl-alt-f2' 'cat /proc/cmdline'
 #
 #   # Emulated Intel HDA sound card.
 #   CMDLINE_EXTRA=osukiosk.hold \
@@ -261,7 +271,10 @@ if [ $# -gt 0 ]; then
 	mon "sendkey ret"
 	sleep 2
 	for cmd in "$@"; do
-		type_line "$cmd" || exit 1
+		case "$cmd" in
+		mon:*) mon "${cmd#mon:}" ;;
+		*) type_line "$cmd" || exit 1 ;;
+		esac
 		sleep "${STEP_WAIT:-2}"
 	done
 	sleep "${FINAL_WAIT:-0}"
