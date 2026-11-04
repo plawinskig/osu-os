@@ -1,0 +1,24 @@
+#!/bin/sh
+# latency-probe-vt - console counterpart of latency-probe (osu!kiosk,
+# Stage 5 Step D; a development tool, see PROGRESS.md).
+#
+# Every key press toggles reverse video (DECSCNM) on the whole Linux
+# console. The way from the key to the panel is keyboard -> kernel -> tty
+# -> this shell -> fbcon, with no Wayland compositor in between, so a
+# camera recording of it shows the floor of the hardware that the cage
+# measurements are compared against. Run it on a text console (the tty2
+# root shell); Ctrl+C ends it and restores normal video.
+
+reverse_on=$(printf '\033[?5h')
+reverse_off=$(printf '\033[?5l')
+
+trap 'printf "%s" "$reverse_off"; exit 0' INT TERM
+
+# -n 1 returns after a single key, without waiting for Enter; -s keeps the
+# key from being echoed. BusyBox ash supports both.
+while read -rsn 1 key; do
+	printf '%s' "$reverse_on"
+	read -rsn 1 key || break
+	printf '%s' "$reverse_off"
+done
+printf '%s' "$reverse_off"

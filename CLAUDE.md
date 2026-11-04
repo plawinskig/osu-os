@@ -219,7 +219,13 @@ są jego rodzeństwem (`../buildroot`, `../output-initramfs`).
    listy sterowników Mesy) — potrzebny `make -C ../buildroot <pakiet>-reconfigure`.
    Po buildzie `make -C ../buildroot savedefconfig` + `git diff configs/`: diff
    ma pokazać wyłącznie zamierzone linie (Kconfig potrafi po cichu wyciąć
-   zależne opcje).
+   zależne opcje). Efektywny `.config` main systemu to `../buildroot/.config`
+   (build bez `O=`), nie plik w `output/`.
+   Własne pakiety mają metadane w `package/<nazwa>/`, podpięte przez
+   `Config.in` i `external.mk` w katalogu głównym repo, a źródła w
+   `src/<nazwa>/` (`_SITE_METHOD = local`). Po edycji źródła potrzebny jest
+   `make -C ../buildroot <nazwa>-rebuild`, bo zwykły `make` nie zauważa zmian
+   w lokalnym katalogu.
 3. **Obraz:** skill `build-osukiosk-image`. Uwaga: `genimage` czyta pliki z
    `board/osukiosk/` (`--inputpath .`), więc `bzImage` i `rootfs.squashfs` kopiujemy
    tam (katalog `boot-files/` był nieużywany i zawierał tylko stare kopie —

@@ -1,0 +1,15 @@
+config BR2_PACKAGE_LATENCY_PROBE
+	bool "latency-probe"
+	depends on BR2_PACKAGE_WAYLAND
+	select BR2_PACKAGE_WAYLAND_PROTOCOLS
+	help
+	  Input latency test tools for osu!kiosk Stage 5 Step D
+	  (development only). latency-probe is a full-screen Wayland
+	  client that flips between black and white on every key or
+	  button press and logs the input-to-presentation latency of
+	  each press (wp_presentation). latency-probe-vt does the same
+	  flip on the Linux console, with no Wayland stack, as the
+	  reference point.
+
+comment "latency-probe needs wayland"
+	depends on !BR2_PACKAGE_WAYLAND
