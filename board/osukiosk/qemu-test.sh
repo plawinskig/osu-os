@@ -13,25 +13,30 @@
 #   syslinux  Boots the assembled output/osukiosk.img through SeaBIOS and
 #             syslinux, the same path a real laptop takes. The kernel
 #             command line comes from extlinux.conf; BOOT_LINE is typed at
-#             the boot: prompt.
+#             the boot: prompt (a label such as "debug", optionally
+#             followed by kernel parameters).
 #
 #   After <boot-wait-s> (default 60) tty1 is screendumped. Each
 #   tty2-command is then typed key by key, through the QEMU monitor, into
-#   the tty2 root shell (inittab askfirst), and tty2 is screendumped last.
+#   the tty2 root shell, and tty2 is screendumped last. That shell exists
+#   only with osukiosk.debug or osukiosk.hold on the kernel command line
+#   (CMDLINE_EXTRA, or BOOT_LINE=debug / hold); a normal boot has none.
 #   A tty2-command of the form mon:<command> is not typed: <command> goes
 #   to the QEMU monitor as it is (a single key such as "sendkey esc", a
 #   "mouse_button 1", or an extra "screendump qemu-artifacts/<name>-x.ppm",
 #   which is converted to PNG like the others).
 #
 # Environment:
-#   CMDLINE_EXTRA  extra kernel parameters, direct mode (e.g. osukiosk.hold)
+#   CMDLINE_EXTRA  extra kernel parameters, direct mode (e.g. osukiosk.debug)
 #   BOOT_LINE      line typed at the syslinux boot: prompt, syslinux mode
 #   QEMU_EXTRA     extra QEMU arguments, split on whitespace
 #   STEP_WAIT      seconds to wait after each typed tty2 command (default 2)
 #   FINAL_WAIT     extra seconds before the tty2 screendump (default 0)
 #   FRESH_DATA=1   start direct mode from a new copy of data.img; by default
-#                  the copy is reused, so /data/log written in one run can be
-#                  read in the next one (e.g. a normal run, then a hold run)
+#                  the copy is reused, so /data written in one run can be
+#                  read in the next one (e.g. a normal run, then a debug run)
+#   NO_DATA=1      direct mode without the data stick, like a machine on
+#                  which the data partition is missing
 #
 # Artifacts go to qemu-artifacts/ next to this script (gitignored): PNG
 # screendumps, the serial log, the data.img copy and the monitor socket,
@@ -43,26 +48,38 @@
 # Reading the results:
 # - The end of a run ("quit") is a power cut for the guest: F2FS rolls
 #   /data back to its last checkpoint, so only synced files survive into
-#   the next run.
+#   the next run. A "poweroff" typed as the last tty2-command shuts the
+#   guest down cleanly instead (rcK runs and /data is unmounted), and QEMU
+#   exits by itself; the final tty2 screendump is then missing.
 # - The kernel has no virtio-gpu driver, so on a normal boot cage waits
 #   about 10 s for a KMS device, exits with "Found 0 GPUs" and init
 #   respawns the session.
+# - The tty2 screendump holds only the last 25 lines. In direct mode, a
+#   first tty2-command of 'exec >/dev/ttyS0 2>&1' sends the output of all
+#   the following ones to the serial log instead.
 #
 # Examples (from the repository root):
 #   # Smoke test: boot to the session, screendump tty1.
 #   board/osukiosk/qemu-test.sh direct smoke
 #
 #   # Diagnosis without cage taking over the console: hold mode + tty2.
+#   # Hold mode leaves the logs of the previous run untouched.
 #   CMDLINE_EXTRA=osukiosk.hold board/osukiosk/qemu-test.sh direct hold 60 -- \
-#       'cat /proc/cmdline' 'tail -n 8 /data/log/cage.log'
+#       'cat /proc/cmdline' 'tail -n 8 /data/log/session.log'
 #
-#   # cage without a GPU: headless output, the guest's real keyboard through
-#   # libinput, pixman renderer. The second command is typed into foot
-#   # inside cage, the third one back into the tty2 shell.
-#   CMDLINE_EXTRA=osukiosk.hold STEP_WAIT=5 board/osukiosk/qemu-test.sh direct kbd 60 -- \
-#       'su -s /bin/sh kiosk -c "export XDG_RUNTIME_DIR=/run/user/900 LANG=C.UTF-8 WLR_BACKENDS=headless,libinput WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman; cage -- foot /bin/sh 2>/data/log/cage-kbd.log & sleep 10; kill \$!"' \
-#       'touch /run/user/900/typed-ok' \
-#       'ls -l /run/user/900/typed-ok'
+#   # The whole session without a GPU, started by init. Hold mode keeps tty2
+#   # stable (in debug mode the crash-looping cage switches to tty1 every
+#   # 10 s). The session script is swapped for a copy that selects cage's
+#   # headless output, the pixman renderer and the guest's real keyboard
+#   # through libinput (su passes WLR_* on), skips the hold check and adds
+#   # -s; killing the hold session's sleep makes init start that copy. The
+#   # next two lines are typed into foot inside cage: "exit" there makes init
+#   # start the session again, and Ctrl+Alt+F2 (-s) leads back to tty2.
+#   CMDLINE_EXTRA=osukiosk.hold STEP_WAIT=8 board/osukiosk/qemu-test.sh direct chain 25 -- \
+#       'sed -e "2i export WLR_BACKENDS=headless,libinput WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman" -e "s/^if has_boot_flag osukiosk.hold; then$/if false; then/" -e "s/^CAGE_FLAGS=$/CAGE_FLAGS=-s/" /usr/bin/osukiosk-session >/run/s' \
+#       'chmod 0755 /run/s; mount --bind /run/s /usr/bin/osukiosk-session; kill $(pidof sleep)' \
+#       'touch $HOME/typed-ok' 'exit' \
+#       'mon:sendkey ctrl-alt-f2' 'ls -l /data/home/typed-ok; grep -c "cage flags: -s" /data/log/session.log*'
 #
 #   # Raw monitor commands between typed lines: back to tty1 for an extra
 #   # screendump in the middle of the run, then on in the tty2 shell.
@@ -70,14 +87,17 @@
 #       'mon:sendkey ctrl-alt-f1' 'mon:screendump qemu-artifacts/mon-tty1-again.ppm' \
 #       'mon:sendkey ctrl-alt-f2' 'cat /proc/cmdline'
 #
-#   # Emulated Intel HDA sound card.
+#   # Emulated Intel HDA sound card; the mixer levels come from the udev
+#   # rule and S42alsa (/data/alsa/asound.state, saved by a clean poweroff).
 #   CMDLINE_EXTRA=osukiosk.hold \
 #   QEMU_EXTRA='-audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0' \
-#       board/osukiosk/qemu-test.sh direct audio 60 -- 'aplay -l'
+#       board/osukiosk/qemu-test.sh direct audio 60 -- 'aplay -l' 'amixer -c 0 sget Master'
 #
-#   # Full boot through syslinux, parameters typed at boot:.
-#   BOOT_LINE='osukiosk osukiosk.hold' board/osukiosk/qemu-test.sh syslinux sys 50 -- \
-#       'cat /proc/cmdline'
+#   # No data partition: the serial log shows the fallback to tmpfs.
+#   NO_DATA=1 board/osukiosk/qemu-test.sh direct nodata 40
+#
+#   # Full boot through syslinux, a label typed at boot:.
+#   BOOT_LINE=hold board/osukiosk/qemu-test.sh syslinux sys 50 -- 'cat /proc/cmdline'
 
 set -uo pipefail
 # Character classes in key_for and the generated file names assume C.
@@ -119,22 +139,28 @@ case "$MODE" in
 direct)
 	require "$KERNEL" "build the main system first"
 	require output/boot.vfat "run genimage first, see the build-osukiosk-image skill"
-	require data.img "the F2FS data partition template"
-	DATA=$ART/data.img
-	if [ "${FRESH_DATA:-0}" = 1 ] || [ ! -e "$DATA" ]; then
-		cp --sparse=always data.img "$DATA" || exit 1
-		echo "data: fresh copy of data.img"
-	else
-		echo "data: reusing $DATA (FRESH_DATA=1 for a new copy)"
-	fi
 	BOOT_ARGS=(
 		-kernel "$KERNEL"
 		-append "console=tty1 console=ttyS0 loglevel=7 ${CMDLINE_EXTRA:-}"
 		-drive "file=output/boot.vfat,if=none,id=usbboot,format=raw,snapshot=on"
 		-device usb-storage,drive=usbboot
-		-drive "file=$DATA,if=none,id=usbdata,format=raw"
-		-device usb-storage,drive=usbdata
 	)
+	if [ "${NO_DATA:-0}" = 1 ]; then
+		echo "data: none (NO_DATA=1)"
+	else
+		require data.img "the F2FS data partition template"
+		DATA=$ART/data.img
+		if [ "${FRESH_DATA:-0}" = 1 ] || [ ! -e "$DATA" ]; then
+			cp --sparse=always data.img "$DATA" || exit 1
+			echo "data: fresh copy of data.img"
+		else
+			echo "data: reusing $DATA (FRESH_DATA=1 for a new copy)"
+		fi
+		BOOT_ARGS+=(
+			-drive "file=$DATA,if=none,id=usbdata,format=raw"
+			-device usb-storage,drive=usbdata
+		)
+	fi
 	;;
 syslinux)
 	require output/osukiosk.img "assemble it, extlinux included, with the build-osukiosk-image skill"
@@ -227,13 +253,14 @@ key_for() {
 	esac
 }
 
-# Types one line, then Enter. QEMU holds each sendkey for its hold time
-# (30 ms here) and processes them one after another, so a long line written
-# at once over a connection that then closes loses its tail and can leave
-# Shift pressed. The keys are therefore paced over one connection that stays
-# open until the last of them has been handled.
+# Types one line, then Enter unless the second argument is "no-enter".
+# QEMU holds each sendkey for its hold time (30 ms here) and processes them
+# one after another, so a long line written at once over a connection that
+# then closes loses its tail and can leave Shift pressed. The keys are
+# therefore paced over one connection that stays open until the last of
+# them has been handled.
 type_line() {
-	local line=$1 i key keys=()
+	local line=$1 enter=${2:-enter} i key keys=()
 	for ((i = 0; i < ${#line}; i++)); do
 		key=$(key_for "${line:i:1}") || return 1
 		keys+=("$key")
@@ -243,7 +270,9 @@ type_line() {
 			echo "sendkey $key 30"
 			sleep 0.08
 		done
-		echo "sendkey ret 30"
+		if [ "$enter" != no-enter ]; then
+			echo "sendkey ret 30"
+		fi
 		sleep 1
 	} | nc -U -q1 "$SOCK" >/dev/null
 }
@@ -251,13 +280,18 @@ type_line() {
 echo "QEMU PID $QEMU_PID, $MODE mode, waiting ${WAIT}s for the boot..."
 
 if [ "$MODE" = syslinux ]; then
-	# The boot: prompt stays up for 3 s (TIMEOUT 30 in extlinux.conf);
-	# SeaBIOS and syslinux get there well within the first second, and the
-	# first typed key stops the countdown.
+	# SeaBIOS and syslinux reach the boot: prompt within half a second, and
+	# the prompt counts down only 1 s (TIMEOUT 10 in extlinux.conf). A
+	# screendump takes about as long (nc waits 1 s before it closes), so
+	# BOOT_LINE is typed first, its first key stopping the countdown, and
+	# Enter follows the screendump of the typed line.
 	sleep 0.5
-	screendump boot-prompt
 	if [ -n "${BOOT_LINE:-}" ]; then
-		type_line "$BOOT_LINE" || exit 1
+		type_line "$BOOT_LINE" no-enter || exit 1
+		screendump boot-prompt
+		mon "sendkey ret"
+	else
+		screendump boot-prompt
 	fi
 fi
 
@@ -267,7 +301,8 @@ screendump tty1
 if [ $# -gt 0 ]; then
 	mon "sendkey ctrl-alt-f2"
 	sleep 2
-	# askfirst: "Please press Enter to activate this console."
+	# A fresh prompt line before the first command; an empty command line
+	# does no harm, and without a debug shell nothing reads it.
 	mon "sendkey ret"
 	sleep 2
 	for cmd in "$@"; do
