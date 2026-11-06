@@ -1,84 +1,114 @@
 #!/bin/sh
-# Graphical session launcher, Stage 5 Step B: minimal cage + swaybg
-# smoke test. Still a throwaway test step, not the final session
-# (that lands in Step E) - just enough to prove the compositor
-# actually renders pixels on the real screen.
+# osu!kiosk session launcher, started as root by BusyBox init from the
+# tty1::respawn line in /etc/inittab. It prepares what the kiosk session
+# needs from root (the runtime and persistent directories, the logs),
+# then drops to the unprivileged "kiosk" account and starts the cage
+# compositor with /usr/bin/osukiosk-game as its only client. seatd
+# (S70seatd, running as root) mediates the GPU and input devices for
+# that unprivileged process; this script never opens one itself.
 #
-# BusyBox init spawns tty1::respawn processes as root (inittab has
-# no per-line user field), so this script's own job is: prepare the
-# one piece of root-only state a Wayland session needs
-# (XDG_RUNTIME_DIR), then drop to the unprivileged "kiosk" account
-# before touching any GPU/input device. seatd (S70seatd, already
-# running as root) is the actual hardware-access mediator for the
-# unprivileged process from here on - this script never opens a
-# DRM/input device itself.
+# init starts this script again whenever it exits, which is how a crash
+# of the game or of the compositor is recovered from. The exec chain at
+# the end (this script -> su -> sh -> cage) keeps all of it one process,
+# so cage exiting is what init sees.
+#
+# Kernel command line switches, set by the "debug" and "hold" labels in
+# extlinux.conf:
+#   osukiosk.debug  start cage with -s, so that Ctrl+Alt+Fn switches VTs
+#                   and the tty2 root shell (osukiosk-debug-shell) is
+#                   reachable while cage holds tty1
+#   osukiosk.hold   do not start cage at all and leave the logs of the
+#                   previous boot untouched, for diagnosis on tty2
 
+KIOSK_USER=kiosk
 RUNTIME_DIR=/run/user/900
+DATA_DIR=/data
+FALLBACK_DATA_DIR=/run/osukiosk-data
 
-# /run is tmpfs (see /etc/fstab, inherited from Buildroot's sysv
-# skeleton) and is already mounted by the time this line runs:
-# inittab's sysinit "mount -a" happens before /etc/init.d/rcS, which
-# itself happens before this tty1::respawn line. No rootfs-overlay
-# ".empty" marker is needed for a path that only ever exists on
-# tmpfs, never on the read-only squashfs.
+has_boot_flag() {
+	grep -qwF "$1" /proc/cmdline
+}
+
+log_kernel() {
+	echo "osukiosk-session: $*" > /dev/kmsg
+}
+
+# /run is tmpfs (mounted by "mount -a" in inittab's sysinit, before rcS
+# and before this respawn line), so the runtime directory needs nothing
+# in the read-only squashfs. It comes before the hold check: a cage
+# started by hand from the tty2 shell needs it too.
 if ! mkdir -p "$RUNTIME_DIR"; then
-	echo "osukiosk-session: cannot create $RUNTIME_DIR" > /dev/kmsg
+	log_kernel "cannot create $RUNTIME_DIR"
 	exit 1
 fi
-chown kiosk:kiosk "$RUNTIME_DIR"
+chown "$KIOSK_USER:$KIOSK_USER" "$RUNTIME_DIR"
 chmod 0700 "$RUNTIME_DIR"
 
-export XDG_RUNTIME_DIR="$RUNTIME_DIR"
-
-# Wayland clients (foot now, the game later) expect a UTF-8 locale, and
-# C.UTF-8 is the only one generated into the image (BR2_GENERATE_LOCALE).
-# BusyBox su without -l passes it on to the kiosk session unchanged.
-export LANG=C.UTF-8
-
-# TEMPORARY, Stage 5 on-hardware testing only (see PROGRESS.md): a
-# laptop under test has no serial console and no network, so keep the
-# compositor's log and a kernel log snapshot on the data partition,
-# where they survive a reboot and can be read back on the development
-# machine. Falls back to tmpfs when /data is not mounted: missing
-# persistence must never keep the session from starting (the same
-# rule as in S41mountdata). Both files are overwritten on every
-# respawn, which keeps their size bounded during a crash loop.
-LOG_DIR=/data/log
-if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
-	LOG_DIR=/run/osukiosk-log
-	echo "osukiosk-session: /data not writable, logging to $LOG_DIR" > /dev/kmsg
-	mkdir -p "$LOG_DIR"
-fi
-chown kiosk:kiosk "$LOG_DIR"
-{ date; dmesg; } > "$LOG_DIR/dmesg.txt"
-# F2FS keeps only what reached a checkpoint (or was fsync'ed): after a
-# hard hang or a power cut - a realistic outcome of GPU bring-up - it
-# rolls back to the last checkpoint and these logs silently vanish.
-# Syncing here makes this snapshot durable, together with the previous
-# respawn's complete cage.log, before the redirect below truncates it.
-sync
-
-# TEMPORARY (see above): "osukiosk.hold" on the kernel command line
-# keeps the compositor from starting at all. seatd binds every new
-# client to whichever VT is active at that moment, so a crash-looping
-# cage would keep taking over the tty2 debug shell while it is in
-# use. Typed at the syslinux prompt as "osukiosk osukiosk.hold".
-if grep -qwF osukiosk.hold /proc/cmdline; then
+# seatd binds every new client to the VT that is active at that moment,
+# so a cage restarted in a crash loop would keep taking over the tty2
+# debug shell. Hold mode starts no client at all.
+if has_boot_flag osukiosk.hold; then
 	exec sleep 3600
 fi
 
-# cage is a single-client kiosk compositor: it exits as soon as its
-# one client exits (crash or otherwise). The test client is the foot
-# terminal: cage implements only xdg-shell (no wlr-layer-shell), so a
-# layer-shell client such as swaybg exits on start and takes cage down
-# with it. A shell prompt on the real screen that echoes typed keys is
-# this step's pass/fail signal. The nested "exec" keeps the whole
-# chain to one process image (osukiosk-session -> su -> sh -> cage),
-# so init's respawn PID tracking follows cage directly: cage exiting
-# is what triggers init to restart this whole script. "-s"
-# (TEMPORARY, see above) allows Ctrl+Alt+Fn VT switching, so the tty2
-# debug shell stays reachable while cage holds tty1. The log redirect
-# is opened here, as root, and simply inherited across su; the leading
-# date tells a log from this boot apart from one left over by an
-# earlier boot.
-exec su -s /bin/sh kiosk -c "date >&2; exec cage -s -- foot /bin/sh" 2> "$LOG_DIR/cage.log"
+# Persistent state (the kiosk account's home and the session logs) lives
+# on the F2FS data partition. When /data is missing or read-only, mkdir
+# fails there (the mount point is on the read-only squashfs) and the
+# state goes to tmpfs instead: missing persistence must never keep the
+# session from starting (the same rule as in S41mountdata), it only means
+# that nothing survives a reboot.
+if ! mkdir -p "$DATA_DIR/home" "$DATA_DIR/log" 2>/dev/null; then
+	log_kernel "$DATA_DIR not writable, keeping this session's state in $FALLBACK_DATA_DIR"
+	DATA_DIR=$FALLBACK_DATA_DIR
+	mkdir -p "$DATA_DIR/home" "$DATA_DIR/log"
+fi
+LOG_DIR=$DATA_DIR/log
+
+# The kiosk account's home. Its passwd entry keeps "/" (a real home there
+# would make mkusers create the directory inside the squashfs, under the
+# mount point), so HOME is exported in the su command below. Whatever
+# follows the XDG base directory defaults then writes under it: the Mesa
+# shader cache and the fontconfig cache in ~/.cache, the game's data in
+# ~/.local/share. Non-recursive: only this directory can have the wrong
+# owner, everything kiosk creates in it is kiosk's already.
+KIOSK_HOME=$DATA_DIR/home
+chown "$KIOSK_USER:$KIOSK_USER" "$KIOSK_HOME"
+chmod 0700 "$KIOSK_HOME"
+
+# Session logs, bounded to two sessions: the one that just ended (it may
+# have crashed, which is when its log matters) and the one starting now,
+# plus a kernel log snapshot. The log is opened here by root and
+# inherited across su, so kiosk never needs write access to it.
+if [ -e "$LOG_DIR/session.log" ]; then
+	mv -f "$LOG_DIR/session.log" "$LOG_DIR/session.log.1"
+fi
+{ date; dmesg; } > "$LOG_DIR/dmesg.txt"
+# F2FS keeps only what reached a checkpoint (or was fsync'ed): after a
+# hard hang or a power cut it rolls back to the last checkpoint, and the
+# log of the session that hung would vanish with it. Syncing here makes
+# the rotation and the kernel log snapshot durable before the new
+# session starts.
+sync
+
+exec 2> "$LOG_DIR/session.log"
+date >&2
+
+CAGE_FLAGS=
+if has_boot_flag osukiosk.debug; then
+	CAGE_FLAGS=-s
+fi
+echo "osukiosk-session: state in $DATA_DIR, cage flags: ${CAGE_FLAGS:-none}" >&2
+
+# Start on tty1 even when someone is on another VT (the debug shell on
+# tty2) at the moment of a respawn: see the seatd note above.
+chvt 1
+
+# Wayland clients expect a UTF-8 locale, and C.UTF-8 is the only one in
+# the image (BR2_GENERATE_LOCALE). BusyBox su without -l passes the
+# environment on, except HOME, SHELL, USER and LOGNAME, which it takes
+# from passwd; that is why HOME is set inside the command instead.
+export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+export LANG=C.UTF-8
+
+exec su -s /bin/sh "$KIOSK_USER" -c \
+	"export HOME='$KIOSK_HOME'; exec cage $CAGE_FLAGS -- /usr/bin/osukiosk-game"

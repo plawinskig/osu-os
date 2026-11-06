@@ -1,0 +1,19 @@
+#!/bin/sh
+# Diagnostic root shell on tty2, started by BusyBox init from the
+# tty2::respawn line in /etc/inittab. There is a shell only when the
+# kernel command line asks for one ("osukiosk.debug" or "osukiosk.hold",
+# set by the "debug" and "hold" labels in extlinux.conf); a normal boot
+# gets none. The shell asks for no password: anyone at the boot: prompt
+# can get root with rdinit=/bin/sh anyway, so this opens no new way in.
+#
+# With osukiosk.debug, osukiosk-session starts cage with -s, so
+# Ctrl+Alt+F2 reaches this shell while the compositor holds tty1.
+
+if grep -qwE 'osukiosk\.(debug|hold)' /proc/cmdline; then
+	# A login shell, so that /etc/profile sets up PATH and the prompt.
+	exec /bin/sh -l
+fi
+
+# A normal boot. Exiting here would make init start this script again
+# every second for as long as the system runs, so stay asleep instead.
+exec sleep infinity

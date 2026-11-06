@@ -1,0 +1,12 @@
+#!/bin/sh
+# The program the kiosk shows full screen: cage's only client, started by
+# /usr/bin/osukiosk-session as the unprivileged "kiosk" account with HOME
+# on the data partition. cage exits when this program exits, and init
+# then starts the whole session again.
+#
+# This is where the game and its environment go (osu!lazer on .NET, the
+# next stage); everything here runs without root. Until then it is a
+# placeholder: the foot terminal with a shell, which also keeps the
+# session checkable on real hardware. foot gets the shell explicitly,
+# because kiosk's login shell is /bin/false.
+exec foot /bin/sh
