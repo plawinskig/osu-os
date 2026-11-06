@@ -1,0 +1,7 @@
+# Read by /etc/init.d/S01seedrng. seedrng keeps its seed in
+# /var/lib/seedrng by default, which is on the read-only root, so it
+# failed on every boot. The data partition is mounted only later (S41),
+# so there is no persistent place this early: keep the seed on tmpfs.
+# Losing it at every reboot costs little: the kernel seeds its RNG on its
+# own (jitter entropy), and nothing in the kiosk does cryptography.
+SEEDRNG_ARGS="--seed-dir=/run/seedrng"
