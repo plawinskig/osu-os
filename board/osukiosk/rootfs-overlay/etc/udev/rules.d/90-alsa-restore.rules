@@ -1,0 +1,14 @@
+# Restores the saved mixer levels of every sound card as soon as its
+# control device appears: at boot (coldplug in S10udevd) and whenever a
+# card shows up later (a late HDA codec probe, USB audio plugged in).
+# Based on the rule of the same name in alsa-utils, which Buildroot does
+# not install with BusyBox init.
+#
+# The state file lives on the data partition, at the same path as in
+# /etc/init.d/S42alsa. During coldplug /data is not mounted yet, so the
+# file is missing and alsactl falls back to "alsactl init": ALSA's default
+# levels with the outputs unmuted (HDA codecs come up muted). S42alsa
+# applies the saved state to those cards once /data is mounted.
+# --no-ucm: the image has no UCM profiles (alsa-ucm-conf), so alsactl
+# would only fail to find them on every card.
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC*", KERNELS!="card*", RUN+="/usr/sbin/alsactl --no-ucm -f /data/alsa/asound.state restore $attr{device/number}"

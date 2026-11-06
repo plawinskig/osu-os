@@ -1,0 +1,49 @@
+#!/bin/sh
+# Keeps the sound card mixer levels on the data partition: applies the
+# saved state at boot, right after S41mountdata has mounted /data, and
+# saves it on a clean shutdown (rcK runs the scripts in reverse order,
+# so "stop" here comes before S41mountdata unmounts /data).
+#
+# The udev rule /etc/udev/rules.d/90-alsa-restore.rules restores each
+# card when it appears, but the cards found during coldplug (S10udevd)
+# appear before /data is mounted and get ALSA's default levels; "start"
+# puts the saved state on them.
+#
+# The state belongs to the stick, not to a machine. alsactl matches cards
+# by their ID, so on another laptop a card gets the defaults plus whatever
+# saved controls match it, and the next clean shutdown saves that
+# laptop's state over the file.
+
+# Same path as in the udev rule.
+STATE_FILE=/data/alsa/asound.state
+MOUNT_POINT=/data
+
+start() {
+    # No saved state yet (a fresh data partition, or no clean shutdown
+    # so far): the udev rule has already given every card the defaults.
+    [ -f "$STATE_FILE" ] || return 0
+
+    # On a machine whose cards are not in the file, alsactl complains
+    # about each of them on stderr. That is expected, not an error, so it
+    # goes to syslog (/var/log/messages, on tmpfs) instead of the boot
+    # screen. --no-ucm: as in the udev rule, there are no UCM profiles.
+    alsactl --no-ucm -f "$STATE_FILE" restore 2>&1 | logger -t alsactl
+}
+
+stop() {
+    # Without the data partition the file would land on the read-only
+    # mount point, where the save can only fail.
+    grep -q " $MOUNT_POINT " /proc/mounts || return 0
+
+    mkdir -p "${STATE_FILE%/*}" && alsactl -f "$STATE_FILE" store
+}
+
+case "$1" in
+    start|stop)
+        "$1"
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+        ;;
+esac
