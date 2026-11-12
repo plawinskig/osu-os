@@ -42,8 +42,29 @@ if [ "$FOUND" -eq 0 ]; then
     exec sh
 fi
 
+# Prints /proc/uptime in hundredths of a second. The file has exactly two
+# decimals ("12.34 ..."); ash arithmetic is integer-only, and the "1"
+# put in front of the decimals keeps a value like "08" from being read as
+# an invalid octal number.
+uptime_centiseconds() {
+    read -r up _ < /proc/uptime
+    echo $(( ${up%.*} * 100 + 1${up#*.} - 100 ))
+}
+
 echo "Copying the system image to RAM..."
+copy_start=$(uptime_centiseconds)
 cp /mnt/boot/rootfs.squashfs /tmp/ || exec sh
+copy_time=$(( $(uptime_centiseconds) - copy_start ))
+
+# The size of the system image costs boot time on every machine, so the
+# copy is measured where it happens: the line goes to the kernel log, and
+# the session saves the kernel log to /data/log/dmesg.txt at every boot.
+[ "$copy_time" -gt 0 ] || copy_time=1
+image_size=$(wc -c < /tmp/rootfs.squashfs)
+speed_tenths=$(( image_size * 1000 / 1048576 / copy_time ))
+printf 'osukiosk-initramfs: copied rootfs.squashfs to RAM, %d MiB in %d.%02d s (%d.%d MiB/s)\n' \
+    $(( image_size / 1048576 )) $(( copy_time / 100 )) $(( copy_time % 100 )) \
+    $(( speed_tenths / 10 )) $(( speed_tenths % 10 )) > /dev/kmsg
 
 mkdir -p /mnt/root
 mount -t squashfs -o loop /tmp/rootfs.squashfs /mnt/root || exec sh
