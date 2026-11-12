@@ -80,11 +80,12 @@ run `make` (main system) or the relevant kernel rebuild first if sources changed
    person to run with the `!` prefix: `! sudo bash <script>`. The warning
    `unable to obtain device geometry` printed by `extlinux` is harmless for
    an image file. Afterwards Claude verifies the result without root
-   (partition 1 starts at byte offset 512 in the current `genimage` layout;
-   confirm with `sfdisk -d output/osukiosk.img`):
+   (partition 1 starts at 1 MiB, byte offset 1048576 or sector 2048, from
+   `align = 1M` in `genimage-osukiosk.cfg`; confirm with
+   `sfdisk -d output/osukiosk.img`):
    ```bash
-   dd if=output/osukiosk.img bs=1 skip=$((512+3)) count=8 2>/dev/null   # OEM name: SYSLINUX (before step 5: mkfs.fat)
-   mdir -a -i output/osukiosk.img@@512 ::                               # must list ldlinux.sys and ldlinux.c32
+   dd if=output/osukiosk.img bs=1 skip=$((1048576+3)) count=8 2>/dev/null   # OEM name: SYSLINUX (before step 5: mkfs.fat)
+   mdir -a -i output/osukiosk.img@@1048576 ::                               # must list ldlinux.sys and ldlinux.c32
    ```
 
 6. **Report the result** and hand off a `dd` command for the person to run
@@ -98,6 +99,33 @@ run `make` (main system) or the relevant kernel rebuild first if sources changed
    sudo umount /dev/sdX1 /dev/sdX2   # only if lsblk shows them mounted
    sudo dd if=osu-kiosk-external/board/osukiosk/output/osukiosk.img of=/dev/sdX bs=4M status=progress conv=fsync
    ```
+
+## Updating a flashed stick without dd
+
+`dd` rewrites the whole stick, the data partition included, so beatmaps,
+scores, settings and logs on `/data` are lost. It is needed only for the
+first flash and whenever the partition layout in `genimage-osukiosk.cfg`
+changes (a stick flashed before Stage 6 still has the old 256 MB boot
+partition). While the layout stays the same, an update replaces just
+`bzImage` and `rootfs.squashfs` on the boot partition (`OSUBOOT`, FAT32,
+1 GiB) and leaves `/data` alone; steps 3 to 6 are then not needed at all.
+
+This writes to the physical stick and needs root, so Claude writes a
+script and hands over a single `! sudo bash <script>` line, as in step 5.
+The script:
+- finds the partition by its label (`blkid -L OSUBOOT`) and stops unless
+  exactly one partition has that label and `lsblk -no TRAN` reports `usb`
+  for its disk;
+- mounts it on a `mktemp -d` mount point, with a `trap` that unmounts;
+- copies each file under a temporary name first and then renames it, so
+  an interrupted copy never leaves a half-written file under the name the
+  bootloader or the initramfs looks for (the partition must have room for
+  the old and the new `rootfs.squashfs` at the same time):
+  ```bash
+  cp buildroot/output/images/rootfs.squashfs "$mnt/rootfs.squashfs.new"
+  mv "$mnt/rootfs.squashfs.new" "$mnt/rootfs.squashfs"   # the same for bzImage
+  ```
+- compares checksums with `buildroot/output/images/`, then runs `sync`.
 
 ## Common failure signature
 
