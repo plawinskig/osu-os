@@ -1,0 +1,68 @@
+#!/bin/sh
+# Ends the kiosk session at shutdown. BusyBox init runs this from the
+# first ::shutdown line in /etc/inittab, before rcK: init runs the
+# shutdown lines while every other process still runs, and kills the
+# rest only afterwards. Without this step the game and cage would still
+# hold files open on /data (the game's database and logs, the session
+# log) when rcK runs S41mountdata, and unmounting the data partition
+# would fail.
+#
+# A shutdown while the game runs comes from the power button (acpid) or
+# from poweroff in the debug shell. When the player leaves the game, the
+# session launcher powers off by itself, after the session has ended, and
+# this script finds nothing to do.
+
+SESSION_PID_FILE=/run/osukiosk-session.pid
+KIOSK_UID=$(id -u kiosk) || exit 1
+# Seconds to wait for each step before going on.
+TIMEOUT=5
+
+# PIDs of the processes whose real UID is the kiosk account's.
+kiosk_pids() {
+	grep -l "^Uid:[[:space:]]*$KIOSK_UID[[:space:]]" /proc/[0-9]*/status 2>/dev/null |
+		sed 's|^/proc/\([0-9]*\)/status$|\1|'
+}
+
+kiosk_alive() {
+	[ -n "$(kiosk_pids)" ]
+}
+
+session_alive() {
+	[ -n "$session_pid" ] && kill -0 "$session_pid" 2>/dev/null
+}
+
+# Polls every 0.2 s while the command given as arguments succeeds, for at
+# most TIMEOUT seconds; fails if it still succeeds by then.
+wait_while() {
+	tries=$((TIMEOUT * 5))
+	while "$@"; do
+		[ "$tries" -gt 0 ] || return 1
+		tries=$((tries - 1))
+		sleep 0.2
+	done
+}
+
+# The launcher first: once cage is gone, it would start a new session or
+# power off, and neither may happen now. It is a shell script without
+# traps waiting for cage, so TERM ends it at once, and with it its hold
+# on the session log.
+session_pid=$(cat "$SESSION_PID_FILE" 2>/dev/null)
+if session_alive; then
+	echo "osukiosk-stop-session: ending the session" > /dev/kmsg
+	kill -TERM "$session_pid"
+	wait_while session_alive
+fi
+
+# Then cage and the game, which run as the kiosk account. TERM first; the
+# game may not handle it (.NET 10 has no default SIGTERM handler), which
+# ends it at once, and that is safe for its database (Realm survives a
+# crash).
+pids=$(kiosk_pids)
+if [ -n "$pids" ]; then
+	kill -TERM $pids 2>/dev/null
+	if ! wait_while kiosk_alive; then
+		kill -KILL $(kiosk_pids) 2>/dev/null
+		wait_while kiosk_alive
+	fi
+fi
+exit 0

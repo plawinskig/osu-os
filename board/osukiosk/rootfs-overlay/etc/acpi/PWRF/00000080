@@ -1,0 +1,7 @@
+#!/bin/sh
+# Run by acpid (started from /etc/inittab) when the power button is
+# pressed: BusyBox acpid's built-in tables turn KEY_POWER into the PWRF
+# action and run /etc/acpi/PWRF/00000080. A clean power off: init ends
+# the kiosk session first (osukiosk-stop-session), then rcK saves the
+# mixer state and unmounts the data partition.
+exec poweroff

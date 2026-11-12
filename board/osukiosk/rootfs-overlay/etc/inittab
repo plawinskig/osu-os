@@ -38,10 +38,18 @@ tty1::respawn:/usr/bin/osukiosk-session
 # boot the script just sleeps. See /usr/bin/osukiosk-debug-shell.
 tty2::respawn:/usr/bin/osukiosk-debug-shell
 
+# Power button: acpid runs /etc/acpi/PWRF/00000080, a clean power off.
+# -f keeps it in the foreground, where init can supervise it.
+::respawn:/sbin/acpid -f
+
 # Stuff to do for the 3-finger salute
 ::ctrlaltdel:/sbin/reboot
 
 # Stuff to do before rebooting
+# The kiosk session ends first. init runs these lines before it signals
+# the remaining processes, and rcK unmounts /data, which the game and the
+# session log keep busy until then. See /usr/bin/osukiosk-stop-session.
+::shutdown:/usr/bin/osukiosk-stop-session
 ::shutdown:/etc/init.d/rcK
 ::shutdown:/sbin/swapoff -a
 ::shutdown:/bin/umount -a -r

@@ -7,10 +7,12 @@
 # (S70seatd, running as root) mediates the GPU and input devices for
 # that unprivileged process; this script never opens one itself.
 #
-# init starts this script again whenever it exits, which is how a crash
-# of the game or of the compositor is recovered from. The exec chain at
-# the end (this script -> su -> sh -> cage) keeps all of it one process,
-# so cage exiting is what init sees.
+# The script waits for cage, which exits with the game's exit status. 0
+# means that the player left the game, and the script powers the machine
+# off. Anything else counts as a crash: the script exits, and init starts
+# it again, which is how a crash of the game or of the compositor is
+# recovered from. The game can only ask for the power off, by the way it
+# exits; this script, running as root, decides.
 #
 # Kernel command line switches, set by the "debug" and "hold" labels in
 # extlinux.conf:
@@ -24,6 +26,7 @@ KIOSK_USER=kiosk
 RUNTIME_DIR=/run/user/900
 DATA_DIR=/data
 FALLBACK_DATA_DIR=/run/osukiosk-data
+SESSION_PID_FILE=/run/osukiosk-session.pid
 
 has_boot_flag() {
 	grep -qwF "$1" /proc/cmdline
@@ -50,6 +53,10 @@ chmod 0700 "$RUNTIME_DIR"
 if has_boot_flag osukiosk.hold; then
 	exec sleep 3600
 fi
+
+# A shutdown while the session runs (the power button, poweroff in the
+# debug shell) ends this script first, see osukiosk-stop-session.
+echo $$ > "$SESSION_PID_FILE"
 
 # Persistent state (the kiosk account's home and the session logs) lives
 # on the F2FS data partition. When /data is missing or read-only, mkdir
@@ -120,5 +127,28 @@ export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 export LANG=C.UTF-8
 export OSUKIOSK_IMPORT_DIR="$IMPORT_DIR"
 
-exec su -s /bin/sh "$KIOSK_USER" -c \
+# su and the shell it starts exec into cage, so the process this script
+# waits for is cage itself.
+su -s /bin/sh "$KIOSK_USER" -c \
 	"export HOME='$KIOSK_HOME'; exec cage $CAGE_FLAGS -- /usr/bin/osukiosk-game"
+status=$?
+echo "osukiosk-session: cage exited with status $status" >&2
+
+# A game whose compositor crashed under it would outlive the session, and
+# osu! runs only once: a second instance hands its arguments over to the
+# first one and exits with 0, so the next session would power the machine
+# off at once. kill -1, run as kiosk, reaches every other process of that
+# account.
+su -s /bin/sh "$KIOSK_USER" -c 'kill -KILL -1' 2>/dev/null
+
+# cage passes on the game's exit status. It also exits with 0 when it is
+# stopped with TERM, so "kill <cage>" in the debug shell powers off too
+# ("kill -9" does not); at shutdown osukiosk-stop-session ends this script
+# before cage.
+if [ "$status" -ne 0 ]; then
+	exit "$status"
+fi
+echo "osukiosk-session: the game was closed, powering off" >&2
+# Let go of the session log: it is on /data, which the shutdown unmounts.
+exec 2>/dev/kmsg
+exec poweroff

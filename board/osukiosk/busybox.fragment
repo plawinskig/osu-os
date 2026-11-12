@@ -1,0 +1,6 @@
+# BusyBox options on top of Buildroot's default busybox.config, merged in
+# through BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES.
+
+# acpid: a short press of the power button powers the machine off cleanly
+# (see /etc/acpi/PWRF/00000080 and the acpid line in /etc/inittab).
+CONFIG_ACPID=y
