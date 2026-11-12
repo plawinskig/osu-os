@@ -109,11 +109,14 @@ sync
 exec 2> "$LOG_DIR/session.log"
 date >&2
 
-CAGE_FLAGS=
+# -m last: with a second monitor (a laptop with an external one), the
+# game goes to the monitor connected last, the external one, instead of
+# being stretched across both.
+CAGE_FLAGS="-m last"
 if has_boot_flag osukiosk.debug; then
-	CAGE_FLAGS=-s
+	CAGE_FLAGS="$CAGE_FLAGS -s"
 fi
-echo "osukiosk-session: state in $DATA_DIR, cage flags: ${CAGE_FLAGS:-none}" >&2
+echo "osukiosk-session: state in $DATA_DIR, cage flags: $CAGE_FLAGS" >&2
 
 # Start on tty1 even when someone is on another VT (the debug shell on
 # tty2) at the moment of a respawn: see the seatd note above.
