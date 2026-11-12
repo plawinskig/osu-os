@@ -1,0 +1,97 @@
+#!/bin/sh
+#
+# udevd start script: Buildroot's package/eudev/S10udevd with one change,
+# in start(). It replaces the original through the rootfs overlay, so
+# compare it with that file after a Buildroot update.
+#
+# Buildroot starts udevd with "start-stop-daemon --background", which
+# returns as soon as the process is forked, and triggers the coldplug
+# events right after. On a fast machine the trigger can run before udevd
+# has bound its netlink socket: the kernel then drops the events, and
+# the devices present at boot never get their driver modules. In QEMU
+# with KVM one boot in four ended up with 3 of 173 devices processed and
+# no GPU driver, so cage kept failing with "Found 0 GPUs"; on real
+# hardware the same race would mean a boot without graphics or sound.
+# udevd's own --daemon mode forks only after the netlink socket is bound
+# and the rules are loaded, so events triggered after it returns wait in
+# the socket instead of being lost.
+
+DAEMON="udevd"
+PIDFILE="/var/run/$DAEMON.pid"
+SETTLE_TIMEOUT=30
+
+UDEVD_ARGS=""
+
+# shellcheck source=/dev/null
+[ -r "/etc/default/$DAEMON" ] && . "/etc/default/$DAEMON"
+
+start() {
+	printf "Starting %s: " "$DAEMON"
+	[ -e /proc/sys/kernel/hotplug ] && printf '\000\000\000\000' > /proc/sys/kernel/hotplug
+	# shellcheck disable=SC2086 # we need the word splitting
+	start-stop-daemon --start --exec "/sbin/$DAEMON" -- --daemon $UDEVD_ARGS
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+		# udevd forked itself, so start-stop-daemon cannot record its
+		# pid; stop() needs it. No worker exists before the trigger.
+		pidof "$DAEMON" > "$PIDFILE"
+	else
+		echo "FAIL"
+	fi
+	udevadm trigger --type=subsystems --action=add
+	udevadm trigger --type=devices --action=add
+	udevadm settle --timeout=$SETTLE_TIMEOUT || echo "udevadm settle failed"
+	return "$status"
+}
+
+stop() {
+	printf "Stopping %s: " "$DAEMON"
+	udevadm control --exit
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+		return "$status"
+	fi
+	while start-stop-daemon --stop --test --quiet --pidfile "$PIDFILE" \
+		--exec "/sbin/$DAEMON"; do
+		sleep 0.1
+	done
+	rm -f "$PIDFILE"
+	return "$status"
+}
+
+restart() {
+	stop
+	start
+}
+
+reload() {
+	printf "Reloading %s config: " "$DAEMON"
+	udevadm control --reload
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+case "$1" in
+	start)
+		start;;
+	stop)
+		stop;;
+	restart)
+		restart;;
+	reload)
+		reload;;
+	*)
+		echo "Usage: $0 {start|stop|restart|reload}"
+		exit 1
+esac
+
+exit $?
