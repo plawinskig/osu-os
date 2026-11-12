@@ -4,9 +4,28 @@
 # on the data partition. cage exits when this program exits, and init
 # then starts the whole session again.
 #
-# This is where the game and its environment go (osu!lazer on .NET, the
-# next stage); everything here runs without root. Until then it is a
-# placeholder: the foot terminal with a shell, which also keeps the
-# session checkable on real hardware. foot gets the shell explicitly,
-# because kiosk's login shell is /bin/false.
-exec foot /bin/sh
+# It starts osu!lazer from /opt/osu-lazer (the official release, with its
+# own .NET runtime; see package/osu-lazer). The game keeps its data under
+# $HOME/.local/share/osu, so beatmaps, scores and settings live on the
+# data partition, and so do the shader caches in $HOME/.cache.
+
+# The image is read-only and offline, so the game's built-in updater
+# (Velopack) must stay off. Distribution packages turn it off the same
+# way: any value here tells osu! that updates come from elsewhere.
+export OSU_EXTERNAL_UPDATE_PROVIDER=osukiosk
+
+# The image has no X11, only cage's Wayland display.
+export SDL_VIDEO_DRIVER=wayland
+
+# Without a network, beatmaps arrive as .osz files copied from another
+# computer into the import directory on the data partition (its path
+# comes from osukiosk-session, because without /data it is on tmpfs).
+# osu! imports the archives given on its command line and deletes each
+# one after a successful import, so a file that is still there on the
+# next start failed and is simply tried again.
+set --
+for archive in "$OSUKIOSK_IMPORT_DIR"/*.osz "$OSUKIOSK_IMPORT_DIR"/*.olz; do
+	[ -f "$archive" ] && set -- "$@" "$archive"
+done
+
+exec /opt/osu-lazer/osu! "$@"

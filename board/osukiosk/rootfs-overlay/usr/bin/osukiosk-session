@@ -57,10 +57,10 @@ fi
 # state goes to tmpfs instead: missing persistence must never keep the
 # session from starting (the same rule as in S41mountdata), it only means
 # that nothing survives a reboot.
-if ! mkdir -p "$DATA_DIR/home" "$DATA_DIR/log" 2>/dev/null; then
+if ! mkdir -p "$DATA_DIR/home" "$DATA_DIR/log" "$DATA_DIR/import" 2>/dev/null; then
 	log_kernel "$DATA_DIR not writable, keeping this session's state in $FALLBACK_DATA_DIR"
 	DATA_DIR=$FALLBACK_DATA_DIR
-	mkdir -p "$DATA_DIR/home" "$DATA_DIR/log"
+	mkdir -p "$DATA_DIR/home" "$DATA_DIR/log" "$DATA_DIR/import"
 fi
 LOG_DIR=$DATA_DIR/log
 
@@ -74,6 +74,15 @@ LOG_DIR=$DATA_DIR/log
 KIOSK_HOME=$DATA_DIR/home
 chown "$KIOSK_USER:$KIOSK_USER" "$KIOSK_HOME"
 chmod 0700 "$KIOSK_HOME"
+
+# Beatmap archives copied in from another computer, which osukiosk-game
+# hands to the game at its next start. The game deletes each archive once
+# it is imported. That takes write access to the directory, not to the
+# file, so kiosk owns the directory, and the files may belong to anyone
+# (the other computer copies them in as root).
+IMPORT_DIR=$DATA_DIR/import
+chown "$KIOSK_USER:$KIOSK_USER" "$IMPORT_DIR"
+chmod 0755 "$IMPORT_DIR"
 
 # Session logs, bounded to two sessions: the one that just ended (it may
 # have crashed, which is when its log matters) and the one starting now,
@@ -109,6 +118,7 @@ chvt 1
 # from passwd; that is why HOME is set inside the command instead.
 export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 export LANG=C.UTF-8
+export OSUKIOSK_IMPORT_DIR="$IMPORT_DIR"
 
 exec su -s /bin/sh "$KIOSK_USER" -c \
 	"export HOME='$KIOSK_HOME'; exec cage $CAGE_FLAGS -- /usr/bin/osukiosk-game"
