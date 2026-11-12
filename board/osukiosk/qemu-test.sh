@@ -30,6 +30,14 @@
 #   CMDLINE_EXTRA  extra kernel parameters, direct mode (e.g. osukiosk.debug)
 #   BOOT_LINE      line typed at the syslinux boot: prompt, syslinux mode
 #   QEMU_EXTRA     extra QEMU arguments, split on whitespace
+#   QEMU_MEM       guest RAM in MiB (default 4096; the system image alone
+#                  takes its own size of RAM, and the game needs more)
+#   QEMU_VGA       display device options, split on whitespace (default
+#                  "-vga virtio": one virtio-vga screen that shows SeaBIOS,
+#                  syslinux and the text console, then cage; two outputs:
+#                  "-vga none -device virtio-vga,max_outputs=2,id=gpu")
+#   KVM=0          emulate the CPU instead of using KVM; by default KVM is
+#                  used whenever /dev/kvm is usable
 #   STEP_WAIT      seconds to wait after each typed tty2 command (default 2)
 #   FINAL_WAIT     extra seconds before the tty2 screendump (default 0)
 #   FRESH_DATA=1   start direct mode from a new copy of data.img; by default
@@ -51,9 +59,11 @@
 #   the next run. A "poweroff" typed as the last tty2-command shuts the
 #   guest down cleanly instead (rcK runs and /data is unmounted), and QEMU
 #   exits by itself; the final tty2 screendump is then missing.
-# - The kernel has no virtio-gpu driver, so on a normal boot cage waits
-#   about 10 s for a KMS device, exits with "Found 0 GPUs" and init
-#   respawns the session.
+# - cage runs on the virtio-vga output: udev loads virtio-gpu like any
+#   other driver module, Mesa has no virtio driver in the image and falls
+#   back to kms_swrast (llvmpipe), so the session renders in software.
+#   A screendump shows the active VT: cage on tty1, the text console on
+#   the others.
 # - The tty2 screendump holds only the last 25 lines. In direct mode, a
 #   first tty2-command of 'exec >/dev/ttyS0 2>&1' sends the output of all
 #   the following ones to the serial log instead.
@@ -174,10 +184,22 @@ syslinux)
 	;;
 esac
 
-# QEMU_EXTRA is split on whitespace on purpose: it carries several options.
+# Without KVM, QEMU emulates every instruction: the system still boots,
+# but the .NET game and the llvmpipe software renderer become unusably
+# slow.
+KVM_ARGS=()
+if [ "${KVM:-1}" = 1 ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+	KVM_ARGS=(-enable-kvm -cpu host -smp 4)
+else
+	echo "qemu-test.sh: running without KVM, the guest CPU is emulated" >&2
+fi
+
+# QEMU_VGA and QEMU_EXTRA are split on whitespace on purpose: they carry
+# several options.
 # shellcheck disable=SC2086
-qemu-system-x86_64 -m 2048 \
-	-device virtio-gpu-pci \
+qemu-system-x86_64 -m "${QEMU_MEM:-4096}" \
+	"${KVM_ARGS[@]}" \
+	${QEMU_VGA:--vga virtio} \
 	-device qemu-xhci \
 	"${BOOT_ARGS[@]}" \
 	-serial "file:$SERIAL" \
