@@ -1,1 +1,2 @@
 source "$BR2_EXTERNAL_OSUKIOSK_PATH/package/latency-probe/Config.in"
+source "$BR2_EXTERNAL_OSUKIOSK_PATH/package/osu-lazer/Config.in"
