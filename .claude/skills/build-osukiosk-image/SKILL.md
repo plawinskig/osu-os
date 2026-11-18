@@ -73,11 +73,13 @@ run `make` (main system) or the relevant kernel rebuild first if sources changed
    sudo losetup -d /dev/loopX
    ```
    **This step runs as root, and Claude cannot run it on its own**: `sudo`
-   asks for a password that Claude's shell cannot enter. Claude writes the
-   commands into a script (temporary mount point from `mktemp -d`,
-   `losetup --find --show -P`, a `trap` that always unmounts and detaches the
-   loop device, `sync` before that) and hands over a single line for the
-   person to run with the `!` prefix: `! sudo bash <script>`. The warning
+   asks for a password that Claude's shell cannot enter. The commands are in
+   `install-extlinux.sh` next to this file (temporary mount point from
+   `mktemp -d`, `losetup --find --show -P`, a `trap` that always unmounts and
+   detaches the loop device, `sync` before that). Claude hands over a single
+   line with the absolute path for the person to run with the `!` prefix:
+   `! sudo bash /home/greggy/Repos/osuos/osu-kiosk-external/.claude/skills/build-osukiosk-image/install-extlinux.sh`.
+   It ends with `extlinux installed.`. The warning
    `unable to obtain device geometry` printed by `extlinux` is harmless for
    an image file. Afterwards Claude verifies the result without root
    (partition 1 starts at 1 MiB, byte offset 1048576 or sector 2048, from
@@ -110,22 +112,45 @@ partition). While the layout stays the same, an update replaces just
 `bzImage` and `rootfs.squashfs` on the boot partition (`OSUBOOT`, FAT32,
 1 GiB) and leaves `/data` alone; steps 3 to 6 are then not needed at all.
 
-This writes to the physical stick and needs root, so Claude writes a
-script and hands over a single `! sudo bash <script>` line, as in step 5.
-The script:
-- finds the partition by its label (`blkid -L OSUBOOT`) and stops unless
-  exactly one partition has that label and `lsblk -no TRAN` reports `usb`
-  for its disk;
-- mounts it on a `mktemp -d` mount point, with a `trap` that unmounts;
+This writes to the physical stick and needs root. The script is
+`update-stick.sh` next to this file; Claude hands over a single line, as
+in step 5:
+`! sudo bash /home/greggy/Repos/osuos/osu-kiosk-external/.claude/skills/build-osukiosk-image/update-stick.sh`.
+It ends with `update-stick: the pendrive is unmounted and can be
+unplugged`, after one `... on the stick == ...` line per file. The script:
+- finds the partition by its label (`OSUBOOT`) and stops unless exactly
+  one partition has that label and `lsblk -no TRAN` reports `usb` for its
+  disk; it unmounts desktop automounts first;
+- checks that the partition has room for the old and the new files at
+  the same time;
 - copies each file under a temporary name first and then renames it, so
   an interrupted copy never leaves a half-written file under the name the
-  bootloader or the initramfs looks for (the partition must have room for
-  the old and the new `rootfs.squashfs` at the same time):
-  ```bash
-  cp buildroot/output/images/rootfs.squashfs "$mnt/rootfs.squashfs.new"
-  mv "$mnt/rootfs.squashfs.new" "$mnt/rootfs.squashfs"   # the same for bzImage
-  ```
-- compares checksums with `buildroot/output/images/`, then runs `sync`.
+  bootloader or the initramfs looks for;
+- mounts the partition again read-only and compares both files byte by
+  byte with the source, so the check reads the stick and not the page
+  cache;
+- takes another source folder as its argument (default
+  `buildroot/output/images`), e.g. a saved copy of the last working pair
+  to roll back to.
+
+Afterwards:
+- The stick no longer matches `output/osukiosk.img`, and the staged copies
+  in `board/osukiosk/` are stale. Before the next full `dd`, run steps 1–5
+  again.
+- A change of the kernel alone can be smoke-tested in QEMU before the
+  stick is touched: `qemu-test.sh direct` boots
+  `buildroot/output/images/bzImage` directly with the rootfs from the old
+  `output/boot.vfat`.
+- Rebuilding the main system rewrites `rootfs.squashfs` with new
+  timestamps even when no file changed. To tell, compare
+  `unsquashfs -lls` listings without the time column, and the content of
+  `lib/modules`, between the old and the new image.
+
+Checks without root: a stick that is plugged in is usually automounted
+under `/media/<user>/OSUBOOT`, so `md5sum` of the files there against
+`buildroot/output/images/` (and `ldlinux.sys`, `ldlinux.c32` against the
+image's partition, read with `mcopy -i output/osukiosk.img@@1048576`)
+shows what the stick holds. The boot sector itself needs root to read.
 
 ## Common failure signature
 
