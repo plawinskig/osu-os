@@ -62,8 +62,14 @@ ukończonej mapie).
 w `board/osukiosk/rootfs-overlay/etc/inittab` (initramfs go nie używa — jego PID 1
 to skrypt `initramfs-overlay/init`). Wpis `tty1::respawn:/usr/bin/osukiosk-session`
 to nadzorca kiosku: init restartuje launcher przy każdym jego wyjściu. Łańcuch
-sesji: `osukiosk-session` (root: katalogi, logi, zrzut uprawnień) → `cage` (jako
-`kiosk`) → `osukiosk-game` (miejsce na grę, dziś placeholder `foot`). Wpis
+sesji: `osukiosk-session` (root: katalogi, logi, zrzut uprawnień) → `cage -m last`
+(jako `kiosk`) → `osukiosk-game` → osu!lazer. Sesja czeka na `cage`, który
+zwraca kod wyjścia gry: 0 (gracz wyszedł z gry) oznacza `poweroff`, a inny kod
+(crash) kończy skrypt, więc init robi respawn. Przycisk zasilania obsługuje
+BusyBox `acpid` (wpis `::respawn`, akcja `/etc/acpi/PWRF/00000080` →
+`poweroff`). Pierwszą linią `::shutdown` jest `osukiosk-stop-session`: init
+wykonuje linie shutdown, zanim zabije resztę procesów, więc bez niej gra i log
+sesji trzymałyby `/data`, a `rcK` (S41mountdata) nie odmontowałby jej czysto. Wpis
 `tty2::respawn:/usr/bin/osukiosk-debug-shell` daje shell roota tylko z
 `osukiosk.debug` albo `osukiosk.hold` w linii poleceń (etykiety `debug`/`hold` w
 `extlinux.conf`); w zwykłym boocie śpi. Uwaga: BusyBox
@@ -86,11 +92,26 @@ do obrazu w grze bez vsync mija ok. 55 ms, z czego jedna klatka to
 kolejkowanie w `cage`; największy rozrzut daje klawiatura laptopa, nie
 kompozytor. Gamescope odpada także sprzętowo: wymaga Vulkana, a Intel Gen6
 (HD 3000) nie ma w Mesie sterownika Vulkan. Mesa: Gallium `crocus` (Intel Gen4–7.5)
-+ `iris` (Gen8+). Audio na start: sam ALSA (sterowniki kodeków HDA +
++ `iris` (Gen8+) + `llvmpipe` (programowy, dla QEMU); desktop OpenGL bez X11
+daje libglvnd (`libOpenGL.so.0`). `cage -m last` pokazuje grę tylko na ostatnio
+podłączonym wyjściu. Audio na start: sam ALSA (sterowniki kodeków HDA +
 `snd-usb-audio` jako moduły), bez PipeWire (świadome uproszczenie
 edukacyjne, PipeWire to rozszerzenie na później). Poziomy miksera: reguła
 udev `90-alsa-restore.rules` + `S42alsa`, stan w `/data/alsa/asound.state`
 zapisywany przy czystym wyłączeniu (bez pliku: domyślne poziomy ALSA).
+
+**Gra (Etap 6, zamknięty 18.11.2026):** pakiet `package/osu-lazer` instaluje
+oficjalne wydanie do `/opt/osu-lazer` w rootfs, więc gra też działa z RAM.
+To AppImage z przypiętą wersją i sha256, rozpakowany przy buildzie bez
+uruchamiania (`appimage-offset.sh` + `unsquashfs`), z `_REDISTRIBUTE = NO`.
+Runtime .NET (self-contained), SDL3, BASS i FFmpeg są w paczce. Z systemu gra
+bierze glibc, ICU, OpenSSL, libglvnd, Wayland, xkbcommon i ALSA (`select` w
+`Config.in` pakietu); `BR2_STRIP_EXCLUDE_DIRS` chroni jej pliki przed stripem.
+Wymaga GL 3.2 core (na HD 3000 `crocus` daje 3.3). `osukiosk-game` wyłącza
+updater gry (`OSU_EXTERNAL_UPDATE_PROVIDER`) i wymusza Wayland. Bez sieci
+beatmapy przychodzą przez `/data/import`: pliki `.osz`/`.olz` trafiają do gry
+jako argumenty startu, a ona kasuje zaimportowane. Dane i logi gry leżą w
+`/data/home/.local/share/osu`.
 
 ## Decyzje techniczne — nie podważaj bez dobrego powodu
 
@@ -141,6 +162,25 @@ zapisywany przy czystym wyłączeniu (bez pliku: domyślne poziomy ALSA).
   a sesja kieruje `HOME` konta `kiosk` na `/data/home`.
 - Label partycji FAT32 **ograniczony do 11 znaków** (limit specyfikacji) —
   obecny label to `OSUBOOT`.
+- **Layout obrazu:** partycja boot 1 GiB FAT32 od 1 MiB (`align = 1M`, `-F 32`
+  w `genimage-osukiosk.cfg`), dane F2FS 4 GiB. Dopóki layout się nie zmienia,
+  pendrive aktualizuje się bez `dd` (podmiana `bzImage` i `rootfs.squashfs`).
+- **Nagłówki toolchaina = kernel:** main ma `AS_KERNEL` (domyślne przy
+  kernelu) z `BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18`, initramfs (bez
+  kernela) ma `BR2_KERNEL_HEADERS_6_18`. glibc nie może zakładać syscalli
+  nowszych niż kernel. Przy podbiciu kernela podbij oba, co oznacza pełny
+  rebuild toolchaina.
+- **`board/osukiosk/post-build.sh`** usuwa z targetu clang, libclc i narzędzia
+  SPIR-V. Mesa wciąga je jako pakiety targetu (iris → precomp compiler →
+  OpenCL), ale w runtime ich nie używa (−41 MB squashfs).
+- **`S10udevd` w overlayu** startuje `udevd --daemon`, który forkuje się
+  dopiero po związaniu netlinka i wczytaniu reguł. Wersja Buildroota
+  (`start-stop-daemon --background` i od razu `udevadm trigger`) gubiła
+  zdarzenia coldplug: w QEMU z KVM jeden boot na cztery był bez modułów.
+- **Domyślny governor `schedutil`** (runda governora, 18.11.2026): w grze
+  działa tak samo jak `performance`, w menu jest chłodniej. `performance`
+  zostaje wbudowany, przywraca go `osukiosk cpufreq.default_governor=performance`
+  przy `boot:`.
 - Cała customizacja Buildroota żyje w `osu-kiosk-external/` (mechanizm
   `br2-external`) — nigdy nie edytuj plików wewnątrz `../buildroot/` poza
   generowanymi artefaktami builda. Update Buildroota do nowszego tagu LTS nie
@@ -215,6 +255,10 @@ UEFI+GPT boot, druga "chirurgiczna" wersja systemu pod jeden konkretny laptop.
   `linux.config` do minimalnej postaci (dziedziczone domyślne flagi znikają).
 - Do `git` nie trafiają artefakty builda: `board/osukiosk/bzImage`,
   `rootfs.squashfs`, `output/`, `*.img` są w `.gitignore`.
+- Rundy na sprzęcie (Z570): narzędzia i wyniki leżą poza repo, w
+  `../measurements/<runda>/` (spis w `../measurements/README.md`), a procedura
+  jest w skillu `hardware-test-round`. Zrzuty ekranu z testów trafiają do
+  `../screenshots/<data>-<temat>/` z krótkim `README.md`.
 
 ## Workflow builda i testu
 
@@ -249,7 +293,9 @@ są jego rodzeństwem (`../buildroot`, `../output-initramfs`).
    `board/osukiosk/` (`--inputpath .`), więc `bzImage` i `rootfs.squashfs` kopiujemy
    tam (katalog `boot-files/` był nieużywany i zawierał tylko stare kopie —
    usunięty, nie odtwarzaj go). Krok
-   `extlinux --install` wymaga `sudo` — uruchamia go autor.
+   `extlinux --install` wymaga `sudo` — uruchamia go autor. Gotowe skrypty dla
+   autora leżą w katalogu skilla: `install-extlinux.sh` i `update-stick.sh`
+   (aktualizacja pendrive'a bez `dd`).
 4. **Test w QEMU przed pendrive'em:** `board/osukiosk/qemu-test.sh` (użycie i
    gotowe przykłady w nagłówku skryptu).
    - `direct <nazwa> [czekanie-s] [-- komendy…]` bootuje `bzImage`
@@ -264,22 +310,24 @@ są jego rodzeństwem (`../buildroot`, `../output-initramfs`).
      `board/osukiosk/qemu-artifacts/`; QEMU nigdy nie pisze do `data.img` ani
      `output/osukiosk.img`. Własne wywołania QEMU: gniazdo monitora po
      ścieżce względnej (limit 108 B).
-   - Diagnoza: `CMDLINE_EXTRA=osukiosk.hold` — sesja nie startuje `cage` i nie
-     rusza logów, więc shell na tty2 jest stabilny. W trybie `osukiosk.debug`
-     `cage` w QEMU pada co 10 s (brak GPU), a sesja przełącza wtedy na tty1,
-     co przerywa wpisywanie. Na sprzęcie: etykieta `hold` albo `debug` przy
-     `boot:`.
-   - `cage` bez GPU: `WLR_BACKENDS=headless,libinput WLR_HEADLESS_OUTPUTS=1
-     WLR_RENDERER=pixman` (prawdziwa klawiatura maszyny przez libinput). Pełny
-     łańcuch sesji przez `init` bez GPU: przykład `chain` w nagłówku
-     `qemu-test.sh`.
-   - Emulowane audio: `QEMU_EXTRA='-audiodev none,id=snd0 -device intel-hda
-     -device hda-duplex,audiodev=snd0'`.
+   - QEMU działa z KVM (`-cpu host -smp 4`), 4 GiB RAM i `-vga virtio`. Sesja
+     i gra renderują się przez llvmpipe (`kms_swrast`), więc widać całą sesję z
+     grą. Na sprzęcie zostaje sprawdzić `crocus`, prawdziwe czasy i USB.
+     `CMDLINE_EXTRA=osukiosk.debug` daje shell na tty2 obok gry, a
+     `osukiosk.hold` sesję bez `cage`, z nietkniętymi logami poprzedniego
+     bootu. Na sprzęcie to etykiety `debug` i `hold` przy `boot:`.
+   - Emulowane audio (BASS potrzebuje urządzenia ALSA): `QEMU_EXTRA='-audiodev
+     none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0'`.
    - Koniec przebiegu (`quit`) działa na gościa jak wyrwanie zasilania: F2FS
      cofa `/data` do ostatniego checkpointu, przetrwa tylko to, co
-     zsynchronizowane. `poweroff` wpisany na tty2 to czyste wyłączenie.
+     zsynchronizowane. Czyste wyłączenie dają: `poweroff` wpisany na tty2,
+     wyjście z gry albo `mon:system_powerdown` (przycisk zasilania). QEMU
+     kończy się wtedy sam.
    - Długie wyniki: pierwsza komenda `exec >/dev/ttyS0 2>&1` kieruje wyjście
      kolejnych do logu seriala (tryb `direct`); zrzut tty2 mieści 25 linii.
-   - Kernel nie ma `virtio-gpu`, więc przy normalnym boocie `cage` w QEMU po
-     ok. 10 s kończy się „Found 0 GPUs” i `init` restartuje sesję — to
-     oczekiwane, nie błąd.
+   - Tryb `direct` bierze `bzImage` prosto z `../buildroot/output/images/`, a
+     rootfs z `output/boot.vfat`, więc zmianę samego kernela da się sprawdzić
+     bez `genimage`.
+   - Techniki prób (klawisze i kliknięcia w grze, pliki na `/data` bez roota
+     przez `sload.f2fs`, zastępczy sysfs, druga głowica przez D-Bus) opisuje
+     skill `hardware-test-round`.

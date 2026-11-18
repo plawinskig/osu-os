@@ -15,56 +15,71 @@ Stałą architekturę i konwencje trzymamy w `CLAUDE.md`, nie tutaj.
 - ✅ Etap 3 — fizyczny layout pendrive'a (`genimage`, MBR, syslinux).
 - ✅ Etap 4 — boot end-to-end (ASUS FX503VM, 21.09.2026).
 - ✅ Etap 5 — grafika, audio i docelowa sesja kiosku (Lenovo Z570,
-  24.10–6.11.2026). Podsumowanie niżej, szczegóły kroków A–E w historii
-  tego pliku w gicie.
-- ⏳ Etap 6 — gra (osu!lazer na .NET) w sesji: nie rozpoczęty, zakres do
-  ustalenia. Notatki startowe niżej.
+  24.10–6.11.2026).
+- ✅ Etap 6 — osu!lazer w sesji kiosku (12–18.11.2026). Podsumowanie niżej,
+  szczegóły w commitach `851b1a1`..`e97d9a0`.
+- ⏳ Etap 7 — nowe funkcje: nie rozpoczęty, zakres do wyboru z autorem
+  (kandydaci na końcu pliku).
 
-## Etap 5 — podsumowanie
+## Etap 6 — podsumowanie
 
-- **Sesja:** `tty1::respawn` → `osukiosk-session` (root: `XDG_RUNTIME_DIR`,
-  katalogi na `/data`, logi, zrzut uprawnień) → `cage` (jako `kiosk`,
-  `seatd` mediuje dostęp do GPU i wejścia) → `osukiosk-game` (miejsce na
-  grę, dziś placeholder `foot`). Wyjście albo crash klienta kończy `cage`, a
-  `init` uruchamia sesję od nowa (Z570: nowa sesja po ok. 2 s).
-- **Kompozytor `cage`:** Sway wymaga systemd jako PID 1, Gamescope wymaga
-  Vulkana, którego HD 3000 nie ma. Krok D (pomiar kamerą 240 kl./s): od
-  wciśnięcia do obrazu ok. 55 ms w grze bez vsync, 71 ms z vsync. `cage`
-  dokłada jedną klatkę kolejkowania bez własnego jittera, a największy
-  rozrzut daje klawiatura laptopa (ok. 15–18 ms ±6 ms). Dane:
-  `../measurements/stage5-step-d/`.
-- **Grafika:** Mesa `crocus` (Gen4–7.5) i `iris` (Gen8+). Na Z570 jest
-  akceleracja przez `crocus` (GLES 3.0), a cache shaderów działa w
-  `~/.cache/mesa_shader_cache`.
-- **Audio:** ALSA, kodeki HDA (Realtek, Conexant, HDMI) i `snd-usb-audio`
-  jako moduły. Mikser obsługuje reguła udev `90-alsa-restore.rules` razem z
-  `S42alsa`. Stan leży w `/data/alsa/asound.state` i zapisuje się przy
-  czystym wyłączeniu. Bez pliku obowiązują domyślne poziomy ALSA (Master
-  −20 dB, wyjścia włączone; na Z570 słyszalne i w porządku).
-- **CPU:** domyślny governor to `performance`. Wcześniej `userspace` trzymał
-  CPU bez HWP na minimum (Z570: 800 MHz). Nadpisanie przy `boot:`:
-  `osukiosk cpufreq.default_governor=schedutil`.
-- **Trwałe ścieżki:** `HOME=/data/home` dla `kiosk`, `/data/log`,
-  `/data/alsa`. Bez `/data` stan trafia na tmpfs (`/run/osukiosk-data`), a
-  sesja startuje normalnie. `seedrng` trzyma ziarno w `/run/seedrng`.
-- **Boot:** `quiet`, prompt `boot:` przez 1 s, etykiety `debug` i `hold`
-  (patrz „Tryb diagnostyczny”).
+- **Gra:** pakiet `osu-lazer` rozpakowuje przy buildzie oficjalne wydanie
+  (`2026.1005.0-lazer`) do `/opt/osu-lazer` w rootfs, więc gra też działa z
+  RAM. Na Z570 renderuje przez `crocus` (OpenGL 3.3 core), dźwięk idzie
+  przez BASS na ALSA.
+- **Zachowanie kiosku:**
+  - wyjście z gry (kod 0) wyłącza komputer;
+  - crash gry albo `cage` uruchamia sesję od nowa;
+  - krótkie wciśnięcie przycisku zasilania (`acpid`) czysto wyłącza;
+  - beatmapy bez sieci przychodzą przez `/data/import`;
+  - przy kilku monitorach gra jest tylko na ostatnio podłączonym
+    (`cage -m last`).
+- **Obraz:** partycja boot ma 1 GiB FAT32 od 1 MiB. Pendrive z tym układem
+  aktualizuje się bez `dd` (`update-stick.sh` w skillu
+  `build-osukiosk-image`), a `/data` zostaje.
+- **Kernel i toolchain:**
+  - nagłówki toolchaina z kernela 6.18;
+  - domyślny governor `schedutil` (`e97d9a0`, po rundzie governora);
+  - llvmpipe i virtio-gpu, żeby w QEMU było widać całą sesję z grą.
+- **Rozmiar:** `post-build.sh` usuwa clang, libclc i narzędzia SPIR-V
+  (−41 MB squashfs). `rootfs.squashfs` ma 221 MiB, z czego sama gra to
+  310 MB przed kompresją.
+
+Wyniki na Z570 (szczegóły i analizy w `../measurements/stage6-round1/` i
+`../measurements/stage6-governor/`):
+- Od Entera przy `boot:` do menu gry mija 46 s, a przy pierwszym starcie z
+  importem i kreatorem 51 s. Te 46 s to:
+  - ok. 28 s do startu sesji, w tym 11,4 s kopiowania rootfs do RAM
+    (221 MiB, 19,4 MiB/s);
+  - 4 s do startu gry;
+  - 14 s od startu gry do menu (kolejne starty: 15, 14 i 10 s, pierwszy z
+    importem 20 s).
+- Draw na B no Revenge [Normal] trzyma 120–121 fps przy limicie 120
+  (`Limit2x`, panel 60 Hz), 4,2–5,2 ms na klatkę.
+- Wyjście z gry i przycisk zasilania wyłączają czysto w kilka sekund.
+- Governor: w grze bez różnicy, bo `schedutil` i tak trzyma maksimum. W menu
+  `schedutil` schodzi do 0,8–1,6 GHz zamiast 1,8–2,2.
+- Monitor HDMI (Acer VG242Y, 1920x1080@60) działa, powrót na panel po
+  odłączeniu też. Dwa błędy opisane w „Otwartych sprawach”.
 
 ## Sprzęt testowy — Lenovo IdeaPad Z570
 
-- i3-2330M (Sandy Bridge, 2 rdzenie / 4 wątki, bez HWP i turbo: zegar
-  2,2 GHz, sterownik `intel_cpufreq` w trybie passive), 7,7 GiB RAM.
-- Intel HD 3000 (`8086:0116`, `i915` + `crocus`) obok NVIDIA GT 520M bez
-  sterownika (Optimus). Panel LVDS 1366×768 @ 60,042 Hz jest podpięty do
-  Intela.
-- Tylko USB 2.0. HDA: Realtek ALC272 (`snd-hda-codec-alc662`) i HDMI
-  CougarPoint. Klawiatura wbudowana jest na PS/2.
+- i3-2330M (Sandy Bridge, 2 rdzenie / 4 wątki, 0,8–2,2 GHz, bez HWP i
+  turbo, `intel_cpufreq` w trybie passive), 7,7 GiB RAM.
+- Intel HD 3000 (`8086:0116`, `i915` + `crocus`, 650–1100 MHz) obok NVIDIA
+  GT 520M bez sterownika (Optimus). Panel LVDS 1366×768 @ 60,042 Hz, wyjścia
+  VGA i HDMI (1080p maksymalnie 60 Hz).
+- Bez baterii, zawsze na zasilaczu.
+- Pakiet zaczyna throttling przy ok. 80 °C, po 40–65 s gry. Liczniki rdzeni
+  stoją, a GPU dostaje 1000–1050 zamiast zadanych 1100 MHz.
+- Tylko USB 2.0 (EHCI). Pendrive (090c:1000) czyta 19,4 MiB/s. HDA: Realtek
+  ALC272 i HDMI CougarPoint. Klawiatura wbudowana na PS/2, przycisk
+  zasilania to `event2`.
 - Boot: pendrive w port USB 2.0, F12 → USB HDD (legacy). Prompt `boot:`
-  łapie się Spacją wciśniętą zaraz po wyborze w F12. Zainstalowany na
-  dysku Parrot (UEFI) zostaje nietknięty: initramfs nie widzi dysku, a main
-  system montuje tylko partycję `OSUKIOSK_DATA`.
+  łapie się Spacją wciśniętą zaraz po wyborze w F12. Parrot na dysku zostaje
+  nietknięty.
 - ASUS FX503VM odpada w testach grafiki: jego iGPU nie jest widoczny w
-  systemie (na PCI jest tylko NVIDIA).
+  systemie.
 
 ## Tryb diagnostyczny (`debug` / `hold`)
 
@@ -75,86 +90,103 @@ Stałą architekturę i konwencje trzymamy w `CLAUDE.md`, nie tutaj.
   - `hold`: jak `debug`, ale sesja nie startuje `cage` i nie rusza logów
     poprzedniego bootu.
 
-  Parametry wpisane po etykiecie są dopisywane do linii poleceń kernela.
-  Na partycji FAT pendrive'a można ustawić `DEFAULT debug` bez rebuilda.
-- Zwykły boot nie ma shella (wrapper `osukiosk-debug-shell` śpi) ani
-  przełączania VT. Fizyczny dostęp i tak daje roota (`rdinit=/bin/sh` przy
-  `boot:`), więc to kwestia wygody, a nie granica bezpieczeństwa.
-- Logi sesji są zawsze w `/data/log`:
-  - `session.log`: stderr `su`, `cage` i klienta w bieżącej sesji;
-  - `session.log.1`: poprzednia sesja, np. ta, która padła;
-  - `dmesg.txt`: zrzut z chwili startu sesji.
-
-  Zgranie na host: `sudo bash ../measurements/stage5-step-e/copy-logs.sh`.
-  `dd` nadpisuje partycję danych, więc logi trzeba zabrać przed nim.
+  Parametry wpisane po etykiecie są dopisywane do linii poleceń kernela,
+  np. `debug printk.time=1` (znaczniki czasu w dmesg) albo
+  `osukiosk cpufreq.default_governor=performance`. Na partycji FAT
+  pendrive'a można ustawić `DEFAULT debug` bez rebuilda.
+- Czyste wyłączenie: wyjście z gry, przycisk zasilania albo `poweroff` na
+  tty2. Tylko ono zapisuje stan miksera (`/data/alsa/asound.state`).
+- Logi sesji (`/data/log`):
+  - `session.log`: stderr `su`, `cage` i gry w bieżącej sesji. Pierwsza
+    linia to data (UTC), a czasy w liniach `cage` liczą się od jego startu;
+  - `session.log.1`: poprzednia sesja. Każdy restart sesji przesuwa logi,
+    więc jeden crash wypycha log poprzedniego bootu;
+  - `dmesg.txt`: zrzut z chwili startu sesji, z czasem kopiowania rootfs.
+- Logi gry: `/data/home/.local/share/osu/logs/<sekunda-startu>.runtime.log`
+  (i `database`, `input`, `performance`…), czasy w UTC.
+- Zgranie na host: `sudo bash ../measurements/stage6-round1/copy-logs.sh
+  [folder]`. Każde kopiowanie rób do nowego folderu, bo domyślny `logs/`
+  zostałby nadpisany. `dd` kasuje partycję danych, więc logi trzeba zabrać
+  przed nim.
 - F2FS zachowuje tylko to, co trafiło do checkpointu (co ≤ 60 s) albo
-  dostało `fsync`. Sesja robi `sync` po rotacji logów, więc log poprzedniej
-  sesji przetrwa wyrwanie zasilania, a log bieżącej tylko do ostatniego
-  checkpointu. Czyste wyłączenie to dziś wyłącznie `poweroff` na tty2 w
-  trybie debug, który zapisuje też stan miksera.
+  dostało `fsync`. Log poprzedniej sesji przetrwa wyrwanie zasilania, a log
+  bieżącej tylko do ostatniego checkpointu.
 - Podmiana sesji bez rebuilda (tryb `debug` albo `hold`):
-  `cp /usr/bin/osukiosk-session /run/s`, `vi /run/s`,
-  `mount --bind /run/s /usr/bin/osukiosk-session`, potem
-  `kill $(pidof cage)` (w `hold`: `kill $(pidof sleep)`) i `init` uruchamia
-  kopię. Sesja sama robi `chvt 1`, więc nowy `cage` nie przejmie tty2.
-  BusyBox nie ma `pkill`, `timeout` ani `logread`; syslog jest w
+  - `cp /usr/bin/osukiosk-session /run/s`, potem `vi /run/s`;
+  - `mount --bind /run/s /usr/bin/osukiosk-session`;
+  - `kill $(pidof cage)` (w `hold`: `kill $(pidof sleep)`), a `init`
+    uruchomi kopię.
+
+  BusyBox nie ma `pkill`, `timeout`, `stat` ani `logread`. Syslog jest w
   `/var/log/messages` (tmpfs).
-- Znane, nieszkodliwe wpisy w `session.log`:
-  - `Failed to disable CRTC` i `Atomic commit failed: Permission denied` przy
-    przełączaniu VT;
-  - asercja `wlr_backend_finish` przy `poweroff` (init zabija `seatd`);
-  - `failed to instantiate compose table` z `foot` (patrz „Otwarte sprawy”).
-- Narzędzia rund sprzętowych (poza repo, szablony na kolejne rundy):
-  - `../measurements/stage5-step-d/`: sonda, nagrania, analiza;
-  - `../measurements/stage5-step-e/`: `step-e.sh`, `upload-round.sh`,
-    `copy-logs.sh`.
+- Znane, nieszkodliwe wpisy:
+  - `session.log`:
+    - `Failed to disable CRTC` i `Atomic commit failed: Permission denied`
+      przy przełączaniu VT;
+    - `couldn't find a Compose file for locale "C.UTF-8"`;
+  - log gry:
+    - `Got zero displays from SDL` przy przełączeniu VT albo zmianie
+      wyjścia;
+    - `Failed to grab keyboard` i `Failed to enable relative mode` (`cage`
+      nie ma tych protokołów);
+    - `wayland cannot position non-popup windows`;
+    - błędy sieci.
 
-  Sonda `latency-probe` (`package/`, `src/`) zostaje w drzewie poza
-  defconfigiem: `BR2_PACKAGE_LATENCY_PROBE=y` przywraca ją do ponownych
-  pomiarów.
+  Szkodliwy jest za to `Atomic commit failed: Device or resource busy`
+  (patrz „Otwarte sprawy”).
+- Rundy sprzętowe: skill `hardware-test-round`, narzędzia i wyniki w
+  `../measurements/` (spis w `README.md` tamże).
 
-## Etap 6 (gra) — notatki startowe
+## Otwarte sprawy (odłożone, do podjęcia osobno)
 
-- Grę uruchamia `/usr/bin/osukiosk-game`, wywoływany przez `cage` jako
-  `kiosk`, bez roota. `HOME=/data/home`, więc dane gry (`~/.local/share/osu`)
-  i cache trafią na `/data`.
-- Renderować bez vsync: w `cage` to ok. 25 ms od kernela do prezentacji
-  zamiast 43 ms (Krok D).
-- Do poważnego grania zewnętrzna klawiatura USB 1000 Hz prawdopodobnie
-  zmniejszy i opóźnienie, i rozrzut wejścia.
-- Niezmierzone: mysz 125 Hz. Rival 110 ma natywnie 1 kHz, więc
-  `usbhid.mousepoll=1` nic dla niej nie zmienia.
+- **`cage` pada przy wyjściu z gry, gdy są podłączone dwa wyjścia**
+  (`-m last`).
+  - Skutek: segfault w `libwayland-server`, status 139 i respawn zamiast
+    wyłączenia, czyli z monitorem wyjście z gry uruchamia grę od nowa.
+  - Przyczyna: w trakcie `wl_display_destroy` `output_destroy` włącza
+    pozostałe wyjście w zwolnionym już `output_layout`. Upstream `master`
+    ma ten sam kod.
+  - Poprawka: w `output_destroy` pominąć `output_layout_remove` i ponowne
+    włączanie, gdy `server->terminated`. Łatka w br2-external, test w QEMU
+    na dwóch głowicach (D-Bus `SetUIInfo`) z przytrzymanym Esc.
+  - Szczegóły: `../measurements/stage6-round1/README.md`.
+- **Gubione klatki w `cage` (EBUSY):** `Atomic commit failed: Device or
+  resource busy`.
+  - Częstość: 1,2–1,7/s przy dużym obciążeniu (Draw ≥ 40%), prawie zero
+    przy lekkim. Zdarza się na panelu, na HDMI i w QEMU (virtio-gpu).
+  - Do sprawdzenia: `WLR_SCENE_DISABLE_DIRECT_SCANOUT=1`,
+    `WLR_DRM_NO_ATOMIC=1`, log debug wlroots.
+  - `../measurements/stage6-governor/gov.sh` liczy te błędy w czasie mapy.
+- **Logi sesji:** trzymamy tylko dwa, więc restart sesji wypycha log
+  poprzedniego bootu. Trzymać więcej albo log na boot.
+- **Throttling przy ok. 80 °C** i niewyjaśniony spadek Draw z rundy 1
+  (105–118 fps przy 8,3–9,5 ms). W rundzie governora było 4,2–5,2 ms, a
+  bateria odpada, bo laptop jej nie ma. Hipoteza: nagrzanie po 25 min gry.
+- **Odłożone z planu Etapu 6:**
+  - tryb względny myszy i więzienie kursora (`cage` nie ma
+    pointer-constraints);
+  - opóźnienie audio (dmix, offset w osu!);
+  - tabela compose;
+  - układ klawiatury w `cage`;
+  - powiększanie `/data` do rozmiaru pendrive'a.
+- **`output/osukiosk.img` jest z 12.11** (stary kernel z `performance`).
+  Pendrive ma już kernel `e97d9a0` wgrany bez `dd`. Przed następnym pełnym
+  `dd` trzeba złożyć obraz od nowa (skill `build-osukiosk-image`).
 
-## Otwarte sprawy
+## Etap 7 — kandydaci (wybór z autorem)
 
-Na etap z grą:
-- **Nagłówki toolchaina** (`BR2_KERNEL_HEADERS_7_0`, glibc
-  `--enable-kernel=7.0`) są nowsze niż kernel 6.18.48. Boot to nie
-  przeszkadza, ale glibc może zakładać syscalle nowsze niż 6.18. Wyrównać
-  przed dociąganiem runtime .NET; wymaga to pełnego rebuilda toolchaina.
-- **`performance` vs `schedutil` z grą:** porównać ciepło i hałas z czasem
-  klatki pod realnym obciążeniem. W Kroku D sonda dwa razy zmierzyła na
-  cpu0 tylko 1,5 i 2,0 GHz mimo `performance` (przyczyna nieznana:
-  głębokie C-states albo dławienie przez kontroler laptopa, np. na
-  baterii). W rundzie Kroku E wszystkie rdzenie pokazały ok. 2195 MHz.
-- **Czyste wyłączanie bez shella:** dziś wyjście klienta oznacza respawn,
-  a danych chronią checkpointy F2FS i `fsync` aplikacji. Możliwe drogi:
-  wyjście z gry kodem 0 → `poweroff` albo przycisk zasilania przez `acpid`
-  (dziś wyłączony w BusyBox). Od tego zależy też zapis stanu miksera poza
-  trybem debug.
-- **`cage -m extend`** (domyślne) rozciąga grę na panel i zewnętrzny monitor
-  naraz. Rozważyć `-m last` albo wybór wyjścia.
-- **`session.log`** rośnie przez całą sesję, jeśli gra dużo pisze na stderr.
-- **Tabela compose:** `foot` zgłasza `failed to instantiate compose table`,
-  bo `/usr/share/X11/locale` nie ma w obrazie, więc dead keys nie działają.
-  Sprawdzić wpisywanie tekstu w grze (SDL też używa xkbcommon).
-- **LLVM/Clang w targecie:** `libLLVM` 87 MB, `libclang-cpp` 77 MB i
-  `libclang` 44 MB. Łańcuch `iris` → `MESA3D_NEEDS_PRECOMP_COMPILER` →
-  `MESA3D_OPENCL` wciąga clang do targetu, choć `libgallium` linkuje tylko
-  `libLLVM`. Kandydat do odchudzenia przy pomiarach RAM i bootu z grą.
-
-Przy zmianie layoutu obrazu (offset 1M, UEFI):
-- **Partycja boot to w praktyce FAT16** (`mkfs` wybiera FAT16 przy
-  256 MB), a typ w MBR to `0x0C` (FAT32 LBA). Boot działa na ASUS-ie i
-  Z570. Ujednolicić (`-F 32` przez `extraargs` w `genimage-osukiosk.cfg`
-  albo typ `0x0E`).
+Pozycje z „Zaparkowane na później” w `CLAUDE.md` ruszamy tylko na wyraźną
+prośbę autora.
+- Natywny boot UEFI + GPT (zaparkowane): nowsze laptopy bez CSM nie
+  uruchomią dziś obrazu.
+- Sieć, najpierw Ethernet, potem Wi-Fi (zaparkowane): pobieranie beatmap,
+  logowanie w osu!.
+- Tablety graficzne (zaparkowane): OpenTabletDriver albo sterowniki HID w
+  kernelu.
+- Tryb względny myszy: łatka pointer-constraints i relative-pointer do
+  `cage`.
+- Szybszy boot: pomiar z `printk.time=1`, mniej skryptów startowych,
+  szybszy start gry.
+- Układ klawiatury (`XKB_DEFAULT_LAYOUT`) i tabela compose.
+- Powiększanie `/data` przy pierwszym starcie.
+- Opóźnienie audio (ALSA bez dmix, kalibracja).

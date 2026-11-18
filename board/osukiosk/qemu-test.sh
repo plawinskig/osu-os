@@ -77,19 +77,19 @@
 #   CMDLINE_EXTRA=osukiosk.hold board/osukiosk/qemu-test.sh direct hold 60 -- \
 #       'cat /proc/cmdline' 'tail -n 8 /data/log/session.log'
 #
-#   # The whole session without a GPU, started by init. Hold mode keeps tty2
-#   # stable (in debug mode the crash-looping cage switches to tty1 every
-#   # 10 s). The session script is swapped for a copy that selects cage's
-#   # headless output, the pixman renderer and the guest's real keyboard
-#   # through libinput (su passes WLR_* on), skips the hold check and adds
-#   # -s; killing the hold session's sleep makes init start that copy. The
-#   # next two lines are typed into foot inside cage: "exit" there makes init
-#   # start the session again, and Ctrl+Alt+F2 (-s) leads back to tty2.
-#   CMDLINE_EXTRA=osukiosk.hold STEP_WAIT=8 board/osukiosk/qemu-test.sh direct chain 25 -- \
-#       'sed -e "2i export WLR_BACKENDS=headless,libinput WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman" -e "s/^if has_boot_flag osukiosk.hold; then$/if false; then/" -e "s/^CAGE_FLAGS=$/CAGE_FLAGS=-s/" /usr/bin/osukiosk-session >/run/s' \
-#       'chmod 0755 /run/s; mount --bind /run/s /usr/bin/osukiosk-session; kill $(pidof sleep)' \
-#       'touch $HOME/typed-ok' 'exit' \
-#       'mon:sendkey ctrl-alt-f2' 'ls -l /data/home/typed-ok; grep -c "cage flags: -s" /data/log/session.log*'
+#   # The game in a debug boot: tty1 shows its menu, then its log is read
+#   # live from tty2 into the serial log. The emulated sound card gives
+#   # BASS an ALSA device.
+#   CMDLINE_EXTRA=osukiosk.debug STEP_WAIT=4 \
+#   QEMU_EXTRA='-audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0' \
+#       board/osukiosk/qemu-test.sh direct game 70 -- 'exec >/dev/ttyS0 2>&1' \
+#       'grep -hE "GL Renderer|BASS initialised|entered MainMenu" /data/home/.local/share/osu/logs/*.runtime.log'
+#
+#   # The power button during a normal boot: acpid powers the guest off
+#   # cleanly and QEMU exits by itself, so the final tty2 screendump is
+#   # missing. Without a debug shell the script's own Ctrl+Alt+F2 and Enter
+#   # reach the game, which does no harm in its menu.
+#   board/osukiosk/qemu-test.sh direct power 70 -- 'mon:system_powerdown'
 #
 #   # Raw monitor commands between typed lines: back to tty1 for an extra
 #   # screendump in the middle of the run, then on in the tty2 shell.
