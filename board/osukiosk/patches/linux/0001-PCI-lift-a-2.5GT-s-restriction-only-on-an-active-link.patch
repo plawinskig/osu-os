@@ -1,0 +1,33 @@
+From: osu!kiosk demo-fast-boot <noreply@localhost>
+Subject: [PATCH] PCI: Lift a 2.5GT/s restriction only on an active link
+
+pcie_failed_link_retrain() lifts a 2.5GT/s Target Link Speed left by the
+firmware on any downstream port whose link supports more, whether a
+device is behind it or not. Its own comment says this is meant for a
+port that "reports its link already being up". On a port with nothing
+behind it the link can never retrain: the attempt times out after a
+second, and restoring the old speed takes another. On the Lenovo IdeaPad
+Z570 (empty Intel PCH root port 00:1c.0, 8086:1c10) that delays every
+boot by 2 s, logged as "removing 2.5GT/s downstream link speed
+restriction" followed by "retraining failed".
+
+A 2.5GT/s restriction never keeps a link from coming up, so check Data
+Link Layer Link Active (valid here: the function returns early without
+Link Active reporting) before lifting it. The status is read again after
+the first block, which may have just brought the link up at 2.5GT/s.
+
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -110,9 +110,11 @@
+ 			goto err;
+ 	}
+ 
++	pcie_capability_read_word(dev, PCI_EXP_LNKSTA, &lnksta);
+ 	pcie_capability_read_word(dev, PCI_EXP_LNKCTL2, &lnkctl2);
+ 	pcie_capability_read_dword(dev, PCI_EXP_LNKCAP, &lnkcap);
+-	if ((lnkctl2 & PCI_EXP_LNKCTL2_TLS) == PCI_EXP_LNKCTL2_TLS_2_5GT &&
++	if ((lnksta & PCI_EXP_LNKSTA_DLLLA) &&
++	    (lnkctl2 & PCI_EXP_LNKCTL2_TLS) == PCI_EXP_LNKCTL2_TLS_2_5GT &&
+ 	    (lnkcap & PCI_EXP_LNKCAP_SLS) != PCI_EXP_LNKCAP_SLS_2_5GB) {
+ 		pci_info(dev, "removing 2.5GT/s downstream link speed restriction\n");
+ 		ret = pcie_set_target_speed(dev, PCIE_LNKCAP_SLS2SPEED(lnkcap), false);
