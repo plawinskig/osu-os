@@ -3,13 +3,33 @@ mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev
 
-# Retry budget for the boot device search: USB enumeration speed varies
-# across hardware, so this needs enough margin for slower machines. Tune by
-# changing these two values only.
-RETRY_COUNT=15
-RETRY_SLEEP=2
+# "osukiosk.safeusb" typed after the label at boot: turns off the two
+# pendrive speedups below (no delay_use, larger transfers for the copy),
+# for a pendrive that does not cope with them.
+SAFE_USB=
+if grep -qw osukiosk.safeusb /proc/cmdline; then
+    SAFE_USB=1
+fi
 
-echo "Looking for the boot device (up to $((RETRY_COUNT * RETRY_SLEEP))s)..."
+# usb-storage waits delay_use seconds (1 by default) after a pendrive is
+# plugged in before it looks at it, to let slow devices settle. The
+# pendrive is probed only after /init starts (USB enumeration takes about
+# a second), so setting this first spares that second on every boot; a
+# device probed earlier simply keeps the default wait.
+if [ -z "$SAFE_USB" ]; then
+    echo 0 > /sys/module/usb_storage/parameters/delay_use 2>/dev/null
+fi
+
+# Time budget for the boot device search: USB enumeration speed varies
+# across hardware, so this needs enough margin for slower machines. The
+# search looks every 0.2 s (5 times a second): the pendrive usually shows
+# up a second or two after /init starts, and every moment it waits
+# unnoticed delays the whole boot.
+RETRY_SECONDS=30
+RETRY_COUNT=$((RETRY_SECONDS * 5))
+RETRY_SLEEP=0.2
+
+echo "Looking for the boot device (up to ${RETRY_SECONDS}s)..."
 mkdir -p /mnt/boot
 FOUND=0
 
@@ -41,6 +61,9 @@ if [ "$FOUND" -eq 0 ]; then
     dmesg | tail -n 40
     exec sh
 fi
+# A timestamped kernel log line (with printk.time=1): how long the search
+# took after the pendrive showed up is part of the boot time.
+echo "osukiosk-initramfs: found the boot device $dev (search pass $((i + 1)))" > /dev/kmsg
 
 # Prints /proc/uptime in hundredths of a second. The file has exactly two
 # decimals ("12.34 ..."); ash arithmetic is integer-only, and the "1"
@@ -51,16 +74,44 @@ uptime_centiseconds() {
     echo $(( ${up%.*} * 100 + 1${up#*.} - 100 ))
 }
 
+# Larger USB transfers for the copy: usb-storage asks a pendrive for at
+# most 240 sectors (120 KiB) per command, because some old devices fail at
+# more. With 2048 (1 MiB) the demo pendrive read 22.5-24.3 MiB/s instead
+# of 19.0-19.3 MiB/s on the Z570 (demo.sh speed, 19.11.2026). The default
+# comes back right after the copy, so the main system, which also writes
+# to the pendrive, runs with it; a failed copy is retried with it.
+disk=${dev#/dev/}
+disk=${disk%%[0-9]*}
+max_sectors_file=/sys/block/$disk/device/max_sectors
+default_sectors=
+if [ -z "$SAFE_USB" ] && [ -w "$max_sectors_file" ]; then
+    read -r default_sectors < "$max_sectors_file"
+    echo 2048 > "$max_sectors_file"
+fi
+restore_max_sectors() {
+    if [ -n "$default_sectors" ]; then
+        echo "$default_sectors" > "$max_sectors_file"
+    fi
+}
+
 echo "Copying the system image to RAM..."
 copy_start=$(uptime_centiseconds)
-cp /mnt/boot/rootfs.squashfs /tmp/ || exec sh
+if ! cp /mnt/boot/rootfs.squashfs /tmp/; then
+    restore_max_sectors
+    echo "The copy failed, trying again with the default USB transfer size..."
+    cp /mnt/boot/rootfs.squashfs /tmp/ || exec sh
+fi
 copy_time=$(( $(uptime_centiseconds) - copy_start ))
+restore_max_sectors
 
 # The size of the system image costs boot time on every machine, so the
 # copy is measured where it happens: the line goes to the kernel log, and
 # the session saves the kernel log to /data/log/dmesg.txt at every boot.
+# The size comes from ls: "wc -c" would read the whole image byte by byte
+# (BusyBox wc has no shortcut for files), seconds of boot time on the Z570.
 [ "$copy_time" -gt 0 ] || copy_time=1
-image_size=$(wc -c < /tmp/rootfs.squashfs)
+set -- $(ls -ln /tmp/rootfs.squashfs)
+image_size=$5
 speed_tenths=$(( image_size * 1000 / 1048576 / copy_time ))
 printf 'osukiosk-initramfs: copied rootfs.squashfs to RAM, %d MiB in %d.%02d s (%d.%d MiB/s)\n' \
     $(( image_size / 1048576 )) $(( copy_time / 100 )) $(( copy_time % 100 )) \
