@@ -3,10 +3,14 @@
 Ten plik opisuje **bieżący, roboczy stan prac** — co jest zrobione, co jest
 w toku, jaki jest aktualny blocker. Jest świadomie krótki i tymczasowy:
 **nadpisuj go**, gdy zamykasz etap lub odblokowujesz problem. Nie dopisuj tu
-historii ("wcześniej próbowaliśmy X, nie zadziałało") — to żyje w `git log`.
-Stałą architekturę i konwencje trzymamy w `CLAUDE.md`, nie tutaj.
+historii ("wcześniej próbowaliśmy X, nie zadziałało") — to żyje w
+`docs/stages/` (plik każdego etapu) i w `git log`. Stałą architekturę i
+konwencje trzymamy w `CLAUDE.md`, nie tutaj.
 
 ## Status etapów
+
+Szczegółowy zapis każdego etapu, także sesji pokazowej `demo-fast-boot`:
+`docs/stages/` (spis w `README.md` tamże).
 
 - ✅ Etap 1 — kernel main systemu (odchudzony), toolchain (glibc, generic
   x86-64).

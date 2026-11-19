@@ -6,14 +6,13 @@ w toku, jaki jest aktualny blocker) znajduje się w `PROGRESS.md` — ten plik
 jest świadomie krótki i tymczasowy, aktualizuj/nadpisuj go po zamknięciu
 każdego etapu.
 
-Pełna, szczegółowa narracja projektu (co próbowaliśmy, co nie zadziałało,
-dlaczego podjęto dane decyzje) jest w `HISTORY.md`. To **nie jest** wymagana
-lektura na każdej sesji — sięgnij po nią tylko wtedy, gdy potrzebujesz
-głębszego kontekstu, którego nie dostarcza ani ten plik, ani `git log`
-(commity sprzed wprowadzenia zasad niżej bywają lakoniczne, więc `HISTORY.md`
-częściowo pełni rolę, którą docelowo powinien pełnić dobrze opisany `git log`
-— nowe wydarzenia dokumentuj przez commity, nie przez dopisywanie do tego
-pliku).
+Szczegółowy zapis każdego etapu (co zrobiono, co nie zadziałało, dlaczego
+podjęto dane decyzje, wyniki pomiarów) jest w `docs/stages/` (spis w
+`docs/stages/README.md`). To **nie jest** wymagana lektura na każdej sesji —
+sięgnij po plik etapu, gdy potrzebujesz głębszego kontekstu, którego nie
+dostarcza ani ten plik, ani `git log`. Plik bieżącego etapu prowadzisz na
+bieżąco (sekcja „Dokumentacja postępów” niżej). `HISTORY.md` to zamknięta
+narracja do Etapu 4; nie dopisuj do niego.
 
 ## Co to za projekt
 
@@ -85,8 +84,8 @@ UEFI-GPT — działa w trybie Legacy/CSM).
 kiosk na `wlroots`, jedna aplikacja pełnoekranowa) bezpośrednio na KMS/DRM,
 priorytet: minimalny input lag i audio latency. Sway odpadł, bo w tym
 Buildroocie wymaga systemd jako PID 1; Gamescope nie ma pakietu (wymagałby
-własnego pakietu br2-external) — szczegóły w historii `PROGRESS.md` (Etap 5)
-w gicie. Wybór
+własnego pakietu br2-external) — szczegóły w
+`docs/stages/05-graphics-audio-session.md`. Wybór
 `cage` przeszedł mierzalną bramkę (Krok D, 5.11.2026). Na Z570 od wciśnięcia
 do obrazu w grze bez vsync mija ok. 55 ms, z czego jedna klatka to
 kolejkowanie w `cage`; największy rozrzut daje klawiatura laptopa, nie
@@ -259,6 +258,22 @@ UEFI+GPT boot, druga "chirurgiczna" wersja systemu pod jeden konkretny laptop.
   `../measurements/<runda>/` (spis w `../measurements/README.md`), a procedura
   jest w skillu `hardware-test-round`. Zrzuty ekranu z testów trafiają do
   `../screenshots/<data>-<temat>/` z krótkim `README.md`.
+
+## Dokumentacja postępów
+
+- `PROGRESS.md`: bieżący stan, krótki i nadpisywany (zasady w jego
+  nagłówku).
+- `docs/stages/NN-<temat>.md`: szczegółowy zapis etapu: cel, kroki z
+  commitami, decyzje z uzasadnieniem, co nie zadziałało i dlaczego, wyniki,
+  odsyłacze do `../measurements/` i `../screenshots/`. Plik bieżącego etapu
+  aktualizuj po każdym zamkniętym kroku, decyzji albo blockerze, w tej samej
+  turze co zmianę, nie na koniec sesji. Nowy etap to nowy plik i nowy wiersz
+  w `docs/stages/README.md`. Po zamknięciu etapu plik jest zamrożony.
+- Pomiary, logi i zrzuty zostają poza repo (punkt o rundach wyżej), a pliki
+  etapów tylko do nich odsyłają.
+- Commity dalej opisują każdą zmianę per plik (zasady Git wyżej). Plik etapu
+  ich nie zastępuje, tylko streszcza i łączy z wynikami. Zmiany w `docs/`
+  podlegają tym samym zasadom commitów co reszta repo.
 
 ## Workflow builda i testu
 
