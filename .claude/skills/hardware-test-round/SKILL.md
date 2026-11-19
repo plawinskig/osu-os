@@ -37,7 +37,11 @@ itself.
     the last boot ended with a clean shutdown.
 
   Give a new folder name for every copy (e.g. `logs-boot4`), because the
-  default `logs/` is overwritten.
+  default `logs/` is overwritten. The folder is relative to the script's
+  own directory: a name, or `../<round>/<name>` for another round's
+  folder, never an absolute path. An absolute path ends up nested under
+  the script's folder, with parents that only root can remove (hit on
+  19.11.2026).
 - `README.md`, with the sections Przebieg rundy, Narzędzia, Próba (QEMU),
   Instrukcja rundy (the exact hand-off) and Wynik na Z570 (results, then
   analysis).
@@ -49,6 +53,10 @@ Templates:
 - `stage6-governor`: `gov.sh start/stop`, a background sampler (CPU, GPU
   clocks, temperatures, game threads, throttling, cut to the play of a
   map), `qemu/fake-sys.sh`.
+- `demo-fast-boot`: a boot timeline (`demo.sh measure`) and read paths
+  (`demo.sh speed`), `upload-demo.sh` (only the script, no beatmaps),
+  `build-variant.sh`, `qemu/` (A/B runs, boot partition images, files out
+  of the data copy). The method is the skill `boot-time`.
 
 ## What the scripts can rely on
 
@@ -60,7 +68,18 @@ Templates:
   - ash supports `local`, `$(( a ? b : c ))` and `${12}`. Write
     `read -r x 2> /dev/null < file`, with the `2>` before the `<`, so that
     a missing file stays silent;
-  - `$( )` forks, so a sampler running every second sets variables instead.
+  - `$( )` forks, so a sampler running every second sets variables instead;
+  - `wc -c` reads every byte (BusyBox has no shortcut for files): take a
+    size from `ls -ln`, e.g. `set -- $(ls -ln "$f"); size=$5`;
+  - `date` has whole seconds only (no `%N`); for a sub-second wall clock,
+    wait for the second to change, then read `/proc/uptime`;
+  - `sleep` takes fractions (`sleep 0.2`), in the initramfs too, whose
+    BusyBox has no `stat` either;
+  - a process's start time is field 22 of `/proc/<pid>/stat`, counted
+    after the `) ` that closes the name, in hundredths of a second since
+    boot.
+- **Kernel messages** have timestamps only with `printk.time=1` on the
+  command line (typed after the label at `boot:`).
 - **Data partition:** `/data` (F2FS).
   - `/data/log`: `session.log`, `session.log.1` and `dmesg.txt`, written
     and synced when a session starts;
@@ -97,7 +116,18 @@ Templates:
   - back up the data copy first:
     `cp --sparse=always board/osukiosk/qemu-artifacts/data.img <scratch>/`;
   - then `sload.f2fs -f <dir> board/osukiosk/qemu-artifacts/data.img`;
-  - never run it on `board/osukiosk/data.img`.
+  - never run it on `board/osukiosk/data.img`;
+  - `sload.f2fs` never overwrites a file already in the image: load a new
+    version of a script into a fresh copy (the backup) or under a new
+    name.
+- **Files back out without root:** `fsck.f2fs --dry-run -t <image>` gives
+  the inode, and `echo y | dump.f2fs -i <inode> <image>` writes the file
+  to `./lost_found/` under the name it was created with (`session.log.1`
+  comes out as `session.log`). `demo-fast-boot/qemu/data-get.sh` does it
+  for one file by name.
+- **Build variants:** on branch `demo-fast-boot`, `QEMU_KERNEL` and
+  `QEMU_BOOT_VFAT` boot a saved pair in direct mode;
+  `demo-fast-boot/qemu/make-vfat.sh` makes the boot partition image.
 - **What QEMU lacks** (cpufreq, thermal zones, i915 clocks): give the
   script an override root for `/sys` (`GOV_SYS=`) and build a fake tree,
   e.g. `stage6-governor/qemu/fake-sys.sh`.
@@ -109,8 +139,11 @@ Templates:
 - **Keys and clicks in the game:**
   - keys go through `mon:sendkey`: the first-run wizard needs Enter five
     times;
-  - holding Esc for 3 s in the menu exits the game, and with it the
-    machine powers off;
+  - holding Esc for 3 s in the menu exits the game (`mon:sendkey esc
+    3000`). In a normal run the script's own Enter first opens the menu
+    buttons and the ACCOUNT panel, and a held Esc then only steps back,
+    so send three plain Esc first. On main the machine then powers off;
+    on `demo-fast-boot` the game starts again;
   - exact clicks go through usb-tablet + QMP (`stage6-round1/qemu/drive.sh`).
 - **A second monitor:** QEMU's D-Bus display and `SetUIInfo` (see the
   Stage 6 step D screenshots README).
@@ -132,6 +165,10 @@ Templates:
 - The author may run steps ahead (extlinux and `dd` before the OK). Check
   afterwards without root, e.g. md5 of the files on the automounted
   `OSUBOOT` against the build.
+- Photos of tty2 are only a backup: the scripts save their output on
+  `/data`, and `copy-logs.sh` brings it back. Read the copied logs before
+  calling a photo unreadable or asking for anything to be retyped, and
+  look where the copy actually went before saying it is missing.
 - **Measurements the author can take:**
   - the stopwatch from Enter at `boot:` to the menu;
   - osu!'s overlay, Ctrl+F11 (the `Draw` row: fps and ms per frame,

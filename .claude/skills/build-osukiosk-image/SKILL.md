@@ -133,6 +133,15 @@ unplugged`, after one `... on the stick == ...` line per file. The script:
   `buildroot/output/images`), e.g. a saved copy of the last working pair
   to roll back to.
 
+Before the update, save the pair the stick boots now, so that one command
+brings it back: copy `bzImage`, `rootfs.squashfs` and `extlinux.conf` to
+`/home/greggy/Repos/osuos/images-main-<commit>/` with an `MD5SUMS` file,
+checked against the stick (the files on the automounted `OSUBOOT`) or
+against `buildroot/output/images/` when that still holds the same build.
+Builds to compare go to `/home/greggy/Repos/osuos/images-demo/<name>/`
+(`measurements/demo-fast-boot/build-variant.sh` does it). Either folder
+is then the argument of `update-stick.sh`.
+
 Afterwards:
 - The stick no longer matches `output/osukiosk.img`, and the staged copies
   in `board/osukiosk/` are stale. Before the next full `dd`, run steps 1–5
@@ -141,6 +150,17 @@ Afterwards:
   stick is touched: `qemu-test.sh direct` boots
   `buildroot/output/images/bzImage` directly with the rootfs from the old
   `output/boot.vfat`.
+- A new rootfs needs a new `output/boot.vfat` for direct mode, but not a
+  new `output/osukiosk.img`: genimage leaves that image without boot code
+  and without extlinux until steps 4–5. To keep the complete image, run
+  genimage with `--outputpath`, `--tmppath` and `--rootpath` in the
+  scratchpad and copy only `boot.vfat` to `output/`, or build the
+  partition image directly with
+  `measurements/demo-fast-boot/qemu/make-vfat.sh` (any pair folder, used
+  with `QEMU_BOOT_VFAT` on branch `demo-fast-boot`).
+- The syslinux mode is needed only when `extlinux.conf` or the bootloader
+  changes. Kernel parameters can be tried in direct mode
+  (`CMDLINE_EXTRA`), and on the Z570 typed after the label at `boot:`.
 - Rebuilding the main system rewrites `rootfs.squashfs` with new
   timestamps even when no file changed. To tell, compare
   `unsquashfs -lls` listings without the time column, and the content of
