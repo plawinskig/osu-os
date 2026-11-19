@@ -45,6 +45,10 @@
 #                  read in the next one (e.g. a normal run, then a debug run)
 #   NO_DATA=1      direct mode without the data stick, like a machine on
 #                  which the data partition is missing
+#   QEMU_KERNEL    direct mode: another bzImage instead of the one in
+#                  buildroot/output/images, e.g. a saved build to compare
+#   QEMU_BOOT_VFAT direct mode: another boot partition image instead of
+#                  output/boot.vfat (relative paths start in board/osukiosk)
 #
 # Artifacts go to qemu-artifacts/ next to this script (gitignored): PNG
 # screendumps, the serial log, the data.img copy and the monitor socket,
@@ -141,18 +145,19 @@ fi
 ART=qemu-artifacts
 SOCK=$ART/mon-$NAME.sock
 SERIAL=$ART/serial-$NAME.log
-KERNEL=../../../buildroot/output/images/bzImage
+KERNEL=${QEMU_KERNEL:-../../../buildroot/output/images/bzImage}
+BOOT_VFAT=${QEMU_BOOT_VFAT:-output/boot.vfat}
 mkdir -p "$ART"
 rm -f "$SOCK" "$SERIAL" "$ART/$NAME"-*.png "$ART/$NAME"-*.ppm
 
 case "$MODE" in
 direct)
 	require "$KERNEL" "build the main system first"
-	require output/boot.vfat "run genimage first, see the build-osukiosk-image skill"
+	require "$BOOT_VFAT" "run genimage first, see the build-osukiosk-image skill"
 	BOOT_ARGS=(
 		-kernel "$KERNEL"
 		-append "console=tty1 console=ttyS0 loglevel=7 ${CMDLINE_EXTRA:-}"
-		-drive "file=output/boot.vfat,if=none,id=usbboot,format=raw,snapshot=on"
+		-drive "file=$BOOT_VFAT,if=none,id=usbboot,format=raw,snapshot=on"
 		-device usb-storage,drive=usbboot
 	)
 	if [ "${NO_DATA:-0}" = 1 ]; then
