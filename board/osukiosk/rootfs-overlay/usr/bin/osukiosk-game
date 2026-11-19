@@ -2,8 +2,8 @@
 # The program the kiosk shows full screen: cage's only client, started by
 # /usr/bin/osukiosk-session as the unprivileged "kiosk" account with HOME
 # on the data partition. cage exits when this program exits and passes
-# its exit status on: 0 (the player left the game) powers the machine off,
-# anything else counts as a crash and starts the session again.
+# its exit status on; in the demo version the session then starts the
+# game again whether the player left it or it crashed.
 #
 # It starts osu!lazer from /opt/osu-lazer (the official release, with its
 # own .NET runtime; see package/osu-lazer). The game keeps its data under

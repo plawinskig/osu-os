@@ -7,10 +7,9 @@
 # log) when rcK runs S41mountdata, and unmounting the data partition
 # would fail.
 #
-# A shutdown while the game runs comes from the power button (acpid) or
-# from poweroff in the debug shell. When the player leaves the game, the
-# session launcher powers off by itself, after the session has ended, and
-# this script finds nothing to do.
+# A shutdown comes from the power button (acpid) or from poweroff in the
+# debug shell, while the game runs: in the demo version, leaving the game
+# starts it again instead of powering off.
 
 SESSION_PID_FILE=/run/osukiosk-session.pid
 KIOSK_UID=$(id -u kiosk) || exit 1

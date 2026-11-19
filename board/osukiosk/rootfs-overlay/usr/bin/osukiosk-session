@@ -7,12 +7,13 @@
 # (S70seatd, running as root) mediates the GPU and input devices for
 # that unprivileged process; this script never opens one itself.
 #
-# The script waits for cage, which exits with the game's exit status. 0
-# means that the player left the game, and the script powers the machine
-# off. Anything else counts as a crash: the script exits, and init starts
-# it again, which is how a crash of the game or of the compositor is
-# recovered from. The game can only ask for the power off, by the way it
-# exits; this script, running as root, decides.
+# The script waits for cage, which exits with the game's exit status, and
+# then exits itself, and init starts it again: a crash of the game or of
+# the compositor is recovered from that way. In the demo version the same
+# happens when the player leaves the game (status 0), so an accidental
+# exit in the menu (Esc held down or pressed a few times) costs a restart
+# of the game instead of a power off and a full boot. Only the power
+# button powers the machine off (acpid).
 #
 # Kernel command line switches, set by the "debug" and "hold" labels in
 # extlinux.conf:
@@ -139,19 +140,19 @@ echo "osukiosk-session: cage exited with status $status" >&2
 
 # A game whose compositor crashed under it would outlive the session, and
 # osu! runs only once: a second instance hands its arguments over to the
-# first one and exits with 0, so the next session would power the machine
-# off at once. kill -1, run as kiosk, reaches every other process of that
-# account.
+# first one and exits with 0, so every new session would end at once,
+# without a game on the screen. kill -1, run as kiosk, reaches every other
+# process of that account.
 su -s /bin/sh "$KIOSK_USER" -c 'kill -KILL -1' 2>/dev/null
 
-# cage passes on the game's exit status. It also exits with 0 when it is
-# stopped with TERM, so "kill <cage>" in the debug shell powers off too
-# ("kill -9" does not); at shutdown osukiosk-stop-session ends this script
-# before cage.
-if [ "$status" -ne 0 ]; then
-	exit "$status"
+# cage passes on the game's exit status: 0 when the player left the game
+# (or when cage was stopped with TERM), anything else after a crash. Both
+# end the same way, with init starting the session again; at shutdown
+# osukiosk-stop-session ends this script before cage, so nothing restarts
+# then. The pause keeps a game that exits at once from restarting in a
+# tight loop.
+if [ "$status" -eq 0 ]; then
+	echo "osukiosk-session: the game was closed, starting it again" >&2
+	sleep 1
 fi
-echo "osukiosk-session: the game was closed, powering off" >&2
-# Let go of the session log: it is on /data, which the shutdown unmounts.
-exec 2>/dev/kmsg
-exec poweroff
+exit "$status"
